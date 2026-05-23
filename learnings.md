@@ -327,19 +327,57 @@ Observations:
   vanished prey. The error gets washed out by many observations but
   shows up as noise in short games.
 
-## Subgoal 4 next
+## Subgoal 4 — balance
 
-The recurring theme of subgoals 1–3 is that big-game captures are
-*hard* because of the flee dynamics + the energy budget + the per-
-hunter movement cadence. With current parameters, even a deliberate
-strategy can't reliably capture moose or elephant in a 60s game.
-Subgoal 4 should:
+Two game-side tunings, both per-kind:
 
-1. Audit `PreyFleeProb*` for kind-asymmetry. Maybe an elephant should
-   flee at ~25% rather than 75% when a hunter is adjacent.
-2. Audit reward magnitudes. Elephant gives 18 points; if it's
-   captured ~1/10 the rate of stags (5 pts), the expected value is
-   only 1.8 — well below a determined rabbit hunter's 1.0 × ~12
-   rabbits/min.
-3. Maybe reduce `PreyThinkIntervalTicks` for rabbits so they spawn
-   pressure, and increase for big game so encirclement has more time.
+1. **Flee probability scales down with size.** Base flee chances at
+   range 1/2/3 are 75/50/25 for Rabbit. Multiplied by 0.80 for Boar,
+   0.70 for Stag, 0.45 for Moose, 0.25 for Elephant. An elephant at
+   range 1 now flees at 18% instead of 75%.
+2. **Think interval scales up with size.** Base 10 ticks. +4 for
+   Boar, +6 for Stag, +10 for Moose, +14 for Elephant. So big game
+   not only reacts less often but also wanders less.
+
+Result is a real shift on the moose end:
+- 3 moose_hunter, multiple seeds: 2–3 moose caught per 60s game
+  (was 0–1). Subgoal 2 criterion a now passes consistently.
+- 4 elephant_hunter: 0–1 elephant per game depending on seed. Still
+  rare. The 4-of-4-sides requirement combined with edge-of-map
+  spawning and limited visibility means perfect encirclement is hard
+  even with sympathetic prey AI.
+- 4 stag_hunter: variable. 0 to 3 stags per game across seeds. The
+  per-game noise is dominated by spawn location more than mechanics.
+- 4 rabbiteer: 25–30 rabbits per game. Per-player rate similar to
+  before (rabbit dynamics unchanged).
+- 2 stag_hunter: 1–3 stags per game across seeds; similar to
+  pre-balance.
+
+Per-player score estimates (60s of self-play):
+- Rabbiteer: 7–8 pts/player (one rabbit per ~3 seconds)
+- Stag_hunter: 3–4 pts/player (variable; one catch is 2.5 pts/player)
+- Moose_hunter: 7–10 pts/player (2 moose @ 3.3 pts/player each)
+- Elephant_hunter: 0–2 pts/player
+
+Reading: coordinated moose hunters are now *competitive* with
+rabbiteers. Elephant hunters are still under-rewarded relative to
+their difficulty. That's the next tuning if I revisit:
+
+- Either bump elephant rewards substantially (current 18 → 30?) so
+  the rare catch is worth the effort,
+- Or further reduce elephant flee (maybe to 10% / 8% / 5%) so 4-side
+  encirclement is plausibly achievable, paying back the reward.
+
+I prefer the latter — score inflation cascades into trust thresholds
+in the modeler.
+
+## Open work — not done in this pass
+
+- Energy-conservation mode for stag_hunter (4-player self-play
+  still wastes one slot to starvation).
+- Stable matching between hunters and big game (one stag = two
+  specific hunters, deterministically; one moose = three).
+- Extract a common bot framework — five files share ~500 lines of
+  identical sprite/camera/nav boilerplate.
+- Per-color memory persisted across rounds (so a modeler in tournament
+  mode can keep learning between games).

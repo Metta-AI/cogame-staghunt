@@ -18,9 +18,11 @@ const
   WorldHeightPixels = WorldHeightTiles * StagTileSize
 
   PlayerMoveCooldownTicks = 5
-  PreyThinkIntervalTicks = 10
+  PreyThinkIntervalTicks = 10  # default; preyThinkInterval() overrides per kind
 
   PreyFleeRadius = 3
+  # Default per-distance flee probabilities. Bigger animals are
+  # cumbersome and react more slowly — see preyFleeProb() below.
   PreyFleeProb1 = 75
   PreyFleeProb2 = 50
   PreyFleeProb3 = 25
@@ -779,7 +781,15 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
   if p.thinkCooldown > 0:
     dec p.thinkCooldown
     return
-  p.thinkCooldown = PreyThinkIntervalTicks
+  # Bigger animals think slower — gives big-game hunting parties more
+  # window to complete encirclement before the prey hops out again.
+  p.thinkCooldown =
+    case p.kind
+    of Rabbit: PreyThinkIntervalTicks       # 10
+    of Boar: PreyThinkIntervalTicks + 4     # 14
+    of Stag: PreyThinkIntervalTicks + 6     # 16
+    of Moose: PreyThinkIntervalTicks + 10   # 20
+    of Elephant: PreyThinkIntervalTicks + 14 # 24
 
   var nearestDist = high(int)
   var nearestX = 0
@@ -795,11 +805,23 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
 
   if alerted:
     p.alertFlash = AlertFlashTicks
-    let fleeProb =
+    let baseProb =
       case nearestDist
       of 1: PreyFleeProb1
       of 2: PreyFleeProb2
       else: PreyFleeProb3
+    # Bigger animals flee less reliably: a rabbit bolts at 75% but an
+    # elephant barely reacts. Without this, big-game hunters can't
+    # encircle in time — coordinated teams ended up losing to
+    # rabbiteers because the prey escapes before a 3rd/4th hunter
+    # closes the loop.
+    let fleeProb =
+      case p.kind
+      of Rabbit: baseProb
+      of Boar: (baseProb * 80) div 100      # 60 / 40 / 20
+      of Stag: (baseProb * 70) div 100      # 52 / 35 / 17
+      of Moose: (baseProb * 45) div 100     # 33 / 22 / 11
+      of Elephant: (baseProb * 25) div 100  # 18 / 12 / 6
     if sim.rng.rand(99) < fleeProb:
       let dx = signOf(p.tileX - nearestX)
       let dy = signOf(p.tileY - nearestY)
