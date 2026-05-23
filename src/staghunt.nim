@@ -1,7 +1,8 @@
 import mummy
 import pixie
 import supersnappy
-import bitworld/clients
+import bitworld/client
+import bitworld/cogame_runtime
 import protocol, server
 import std/[json, locks, monotimes, os, parseopt, random, sequtils, sets, strutils, tables, times]
 
@@ -280,21 +281,6 @@ proc defaultGameConfig(): GameConfig =
     closedRoster: false
   )
 
-proc cogamePath(value, source: string): string =
-  if value.len == 0:
-    return ""
-  const FilePrefix = "file://"
-  if value.startsWith(FilePrefix):
-    result = value[FilePrefix.len .. ^1]
-    if result.len == 0:
-      echo "ERROR: empty file URI from " & source
-      quit(1)
-    return
-  if "://" in value:
-    echo "ERROR: unsupported URI from " & source & ": " & value
-    quit(1)
-  result = value
-
 proc parseGameConfig(jsonStr: string): GameConfig =
   result = defaultGameConfig()
   if jsonStr.len == 0:
@@ -316,7 +302,7 @@ proc parseGameConfig(jsonStr: string): GameConfig =
         break
 
 proc repoDir(): string = getCurrentDir() / ".."
-proc clientDataDir(): string = repoDir() / "clients" / "data"
+proc clientDataDir(): string = repoDir() / "client" / "data"
 proc palettePath(): string = clientDataDir() / "pallete.png"
 proc spriteDir(): string =
   let local = getCurrentDir() / "sprites" / "12px"
@@ -1658,10 +1644,13 @@ proc isWebSocketUpgrade(request: Request): bool =
   request.headers["Sec-WebSocket-Key"].len > 0
 
 proc isStaticRoute(route: string): bool =
+  # CoworldPlayerClientRoute = PlayerClientRoute (aliased after the
+  # Coworld v2 path consolidation); same for Global and Snappy. Listing
+  # both would be a duplicate case label.
   case route
-  of PlayerClientRoute, PlayerClientHtmlRoute, CoworldPlayerClientRoute,
-      GlobalClientRoute, GlobalClientHtmlRoute, CoworldGlobalClientRoute,
-      SnappyClientRoute, SnappyClientPath, CoworldSnappyClientRoute:
+  of PlayerClientRoute, PlayerClientHtmlRoute,
+      GlobalClientRoute, GlobalClientHtmlRoute,
+      SnappyClientRoute, SnappyClientPath:
     true
   else:
     false
@@ -2046,8 +2035,8 @@ when isMainModule:
   var
     address = DefaultHost
     port = DefaultPort
-    configPath = cogamePath(getEnv("COGAME_CONFIG_URI"), "COGAME_CONFIG_URI")
-    saveScoresPath = cogamePath(getEnv("COGAME_RESULTS_URI"), "COGAME_RESULTS_URI")
+    configPath = pathFromCogameEnv(CogameConfigUriEnv)
+    saveScoresPath = pathFromCogameEnv(CogameResultsUriEnv)
     eventLogPath = getEnv("STAG_HUNT_EVENT_LOG")
   for kind, key, val in getopt():
     case kind
