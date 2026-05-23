@@ -176,10 +176,51 @@ Going into subgoals 2 and 3, the templates that worked for stag_hunter:
   proximity to potential partners during downtime; default exploration
   scatters them.
 
+## Subgoal 1 — sidekick
+
+Strategy as stated: follow an ally, flank the prey they're adjacent to.
+
+Changes:
+- `preyAdjacentTo` now returns the *largest* prey adjacent to the ally
+  (was: first in iteration order). Direct expression of the "favor bigger
+  game in a tie" hint from the goal.
+- Added `preyAllyApproaching` + a pre-position step: when the followed
+  ally is within 2 tiles of a multi-player prey, sidekick claims the
+  *nearest unoccupied* cardinal side of that prey itself rather than
+  waiting for the ally to reach the prey and then reacting. The
+  ally-side prediction I tried first was worse than no pre-position —
+  it conflicted with stag_hunter's deterministic parity-side choice
+  and they raced for the same tile.
+
+Result: sidekick still catches things when paired with low-aggression
+allies. With `nearest_hunter + 2 sidekick`, 60s gets 4 rabbits + 1 stag
++ 1 boar.
+
+Open issue: `stag_hunter + sidekick` still catches **zero stags** in
+60s. The pair stays mostly together but stag_hunter is *too aggressive*
+— it triggers the stag's flee response (75% per think cycle within
+range 3) before sidekick is on a complementary side, and the stag runs
+in a chain ahead of them with stag_hunter behind it and sidekick
+behind stag_hunter, never trapping. The fix is on the *prey* side
+(make stags flee perpendicular to the closest hunter, not directly
+away) or in the bot pairing (stag_hunter should hang back when it has
+no ally near a stag, letting the ally lead). Out of scope for "make
+existing players follow stated strategy" — sidekick *is* following
+its strategy; the strategy just doesn't compose with stag_hunter's.
+
 ## Next steps
 
-Sidekick: goal mentions "favor bigger game in a tie." Then subgoal 2:
-moose_hunter and elephant_hunter. The stag_hunter helpers (`chooseStag`,
-`bestStagSide`, `occupiedSidesOf`) are about to be copy-pasted four times
-across new bots; extract a `players/common/coop.nim` module before
-duplicating again.
+Subgoal 2: moose_hunter and elephant_hunter. Lifting from stag_hunter
+with three changes per bot:
+- target filter (`Moose` / `Elephant` instead of `Stag`)
+- required hunters (3 / 4 instead of 2)
+- side selection: any unoccupied side instead of opposing-pair logic
+
+The duplication question: each new bot is ~600 lines, ~500 of which is
+sprite parsing + camera + obstacle map + nav + parseopt boilerplate
+that's identical to stag_hunter. There is a real `common/coop.nim`
+extraction worth doing, but the right boundary is the *whole* Bot
+object (sprites, objects, camera, navigation), not just the hunting
+helpers. Defer the refactor until after both new bots exist — five
+near-identical files make the boundaries obvious. For now: copy
+stag_hunter, change the three things.

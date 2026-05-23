@@ -442,11 +442,51 @@ proc bestFollowTarget(bot: var Bot, players: openArray[PlayerSight]): PlayerSigh
   bot.followTarget = -1
   PlayerSight()
 
+proc preyRank(kind: PreyKind): int =
+  ## Bigger game ranks higher; ties broken by score reward order.
+  case kind
+  of Elephant: 5
+  of Moose: 4
+  of Stag: 3
+  of Boar: 2
+  of Rabbit: 1
+
+proc manhattanDist(ax, ay, bx, by: int): int =
+  abs(ax - bx) + abs(ay - by)
+
 proc preyAdjacentTo(player: PlayerSight, prey: openArray[PreySight]): PreySight =
+  ## "Favor bigger game in a tie" — when the ally has multiple prey adjacent,
+  ## pick the largest. Rabbit ties don't matter (sidekick can't help with
+  ## solo-capture prey anyway — bestFlankSide returns nothing for Rabbit)
+  ## but we still surface the kind so the caller can short-circuit.
+  var bestRank = 0
   for p in prey:
     if isCardinallyAdjacent(player.tileX, player.tileY, p.tileX, p.tileY):
-      return p
-  PreySight()
+      let rank = preyRank(p.kind)
+      if rank > bestRank or
+          (rank == bestRank and result.found and p.objectId < result.objectId):
+        bestRank = rank
+        result = p
+
+proc preyAllyApproaching(
+  player: PlayerSight, prey: openArray[PreySight]
+): PreySight =
+  ## Largest multi-player prey within 2 tiles of the followed ally (and
+  ## not adjacent — that case is handled by `preyAdjacentTo`). Used to
+  ## pre-position to a flank before the ally fully arrives, since fleeing
+  ## prey rarely sit still long enough for the reactive flank to land.
+  var bestRank = 0
+  for p in prey:
+    if p.kind == Rabbit:
+      continue  # solo-capture; we can't help
+    let d = manhattanDist(player.tileX, player.tileY, p.tileX, p.tileY)
+    if d < 1 or d > 2:
+      continue
+    let rank = preyRank(p.kind)
+    if rank > bestRank or
+        (rank == bestRank and result.found and p.objectId < result.objectId):
+      bestRank = rank
+      result = p
 
 proc bestFlankSide(
   selfX, selfY, preyX, preyY: int,
@@ -517,6 +557,45 @@ proc decideMask(bot: var Bot): uint8 =
         bot.updateStuckState(0)
         return 0
       return bot.navigate(flank.x, flank.y)
+
+  # Pre-position: ally is approaching a multi-player prey (within 2
+  # tiles). Don't try to predict which side the ally will pick — that's
+  # ally-strategy-specific and gets it wrong as often as right. Instead,
+  # claim the nearest unoccupied cardinal side ourselves; ally's own
+  # bestCaptureSide-style logic should see us and pick the complement.
+  let approaching = preyAllyApproaching(ally, prey)
+  if approaching.found:
+    const offsets = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+    var
+      bestDx = 0
+      bestDy = 0
+      bestDist = high(int)
+      found = false
+    for off in offsets:
+      let
+        sx = approaching.tileX + off[0]
+        sy = approaching.tileY + off[1]
+      if not inBounds(sx, sy): continue
+      if bot.obstacleMap.getTile(sx, sy) == TileBlocked: continue
+      # Don't claim a side already occupied by another player.
+      var taken = false
+      for p in players:
+        if p.tileX == sx and p.tileY == sy:
+          taken = true
+          break
+      if taken: continue
+      let d = manhattanDist(bot.selfTileX, bot.selfTileY, sx, sy)
+      if d < bestDist:
+        bestDist = d
+        bestDx = off[0]
+        bestDy = off[1]
+        found = true
+    if found:
+      let
+        targetX = approaching.tileX + bestDx
+        targetY = approaching.tileY + bestDy
+      if not (bot.selfTileX == targetX and bot.selfTileY == targetY):
+        return bot.navigate(targetX, targetY)
 
   let dist = abs(bot.selfTileX - ally.tileX) + abs(bot.selfTileY - ally.tileY)
   if dist <= FollowDistance:
