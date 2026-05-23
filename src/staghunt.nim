@@ -671,17 +671,24 @@ proc addPlayer(sim: var SimServer, name = "", slot = -1): int =
   sim.players.high
 
 proc addPrey(sim: var SimServer, kind: PreyKind) =
-  var cx, cy: int
+  var cx, cy, searchRadius: int
   if sim.focusElephant and kind == Elephant and sim.players.len > 0:
-    # In focus mode, drop the elephant right near the player cluster so
-    # we test catch dynamics without any explore phase.
-    let pivot = sim.players[sim.rng.rand(sim.players.len - 1)]
-    cx = pivot.tileX + sim.rng.rand(5) - 2
-    cy = pivot.tileY + sim.rng.rand(5) - 2
+    # In focus mode, drop the elephant at the *centroid* of the player
+    # cluster (with a small jitter) so every hunter sees it from the
+    # start. Tight search radius so we don't end up far away when the
+    # immediate tile is blocked.
+    var sx, sy = 0
+    for pl in sim.players:
+      sx += pl.tileX
+      sy += pl.tileY
+    cx = sx div sim.players.len
+    cy = sy div sim.players.len
+    searchRadius = 2
   else:
     cx = 1 + sim.rng.rand(WorldWidthTiles - 3)
     cy = 1 + sim.rng.rand(WorldHeightTiles - 3)
-  let spot = sim.findOpenTileNear(cx, cy, 10)
+    searchRadius = 10
+  let spot = sim.findOpenTileNear(cx, cy, searchRadius)
   if not spot.ok:
     return
   sim.prey.add Prey(
@@ -749,7 +756,11 @@ proc maintainPrey(sim: var SimServer) =
   for kind in PreyKind:
     if sim.focusElephant and kind != Elephant:
       continue  # focus mode skips all other prey kinds
-    if preyCatchable(kind, playerCount) and sim.countKind(kind) < targetFor(kind):
+    let target =
+      if sim.focusElephant: 1  # one elephant at a time so the 4-bot
+                                # team can't split between two elephants
+      else: targetFor(kind)
+    if preyCatchable(kind, playerCount) and sim.countKind(kind) < target:
       sim.addPrey(kind)
       spawnedKind = kind
       spawned = true

@@ -33,6 +33,8 @@ stag_hunt/focus_eval.sh 4 300 5 1
 | (post-min-max-dist picker) | moose_hunter | 3 moose_hunter | self-play 60s default | **4-5 moose consistent** |
 | (post-min-max-dist picker) | elephant_hunter | 4 elephant_hunter | self-play 60s default | 0-1 (still flaky) |
 | (post-indifferent-cadence) | elephant_hunter | 4 elephant_hunter | self-play 60s default | 0 elephants in 5/5 focus rounds |
+| (focus + centroid spawn) | elephant_hunter | 4 elephant_hunter | focus_eval 4 600 5 (stationary) | 4 captures in 2/5 rounds |
+| (focus + moving elephant) | elephant_hunter | 4 elephant_hunter | focus_eval 4 600 5 | **6 captures over 5 rounds (1.2/round avg)** |
 
 ## Open issues snapshot (as of this writing)
 
