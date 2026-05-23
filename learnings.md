@@ -264,20 +264,82 @@ the summary script. Fixed with a `Lock` around the file write.
 Symptom in the wild: `JSONDecodeError: Extra data: line 1 column 58`
 when reading events.jsonl shortly after game start.
 
-## Next steps
+## Subgoal 3 — modeler
 
-Subgoal 3: a modeling player that tracks per-color hunt-success
-outcomes and adapts. The mechanism is more interesting than the
-fixed-strategy bots: it has to *test* hypotheses, not just enact them.
-Sketch:
+A bot that scores each visible prey by `reward × P(cooperation) ×
+1/dist`, where P(cooperation) is the product of per-color trust
+estimates over the `requiredHunters - 1` best-trusted visible allies.
 
-- Per visible player color, keep counters: tried-stag-with-them-success,
-  tried-stag-with-them-fail, etc. for each prey kind.
-- When picking a hunt, score each option by expected-points-per-cycle
-  using observed success rates. Default to "no data → try once."
-- Decay old observations so a colony that learned new tricks gets
-  re-evaluated.
+State:
+- `colorMem[color].seenCatch: set[PreyKind]` — observed catches we
+  attributed to that color (via kill-glow rising-edge + vanished prey
+  nearby).
+- `colorMem[color].attempts[kind]` / `failures[kind]` — episodes where
+  the modeler was adjacent to that kind with an ally nearby.
+  `failures` increments when the episode ends and the prey escaped
+  (still visible, not captured).
+- `preyMem[idx]` and `lastKillGlowPresent[i]` — last-frame state for
+  edge detection.
 
-The hard part: a player can only learn from cooperations it actually
-participated in. So early-game it has to *seed* the data — try a stag,
-see who joined, attribute success/failure. Same for boar/moose/elephant.
+Trust ramps from 0.5 default → 1.0 after one observed catch → 0.05
+after 5 failures. Conservative; the goal explicitly says "points don't
+matter at this phase!" so we're optimizing for *behavior fidelity*.
+
+Capture detection: the server emits a `KillGlow` object (id base
+7000 + player array index, sprite id 5) on every kill participant.
+The kind is read by cross-referencing a prey from the previous frame
+that vanished within 1 tile of the glow.
+
+Color extraction: server's per-player sprite id is
+`PlayerSpriteBase + colorSlot * 4 + facing.ord`, so
+`colorSlot = (spriteId - PlayerSpriteBase) div 4`. Stable across slots
+*within a round*; resets on new connections to other slots.
+
+Results (60s, default seed):
+- (a) modeler + 3 rabbiteers: modeler caught 13 rabbits + 2 stags (top
+  score, 23). Adapted to "rabbits are what's catchable here".
+- (b) modeler + 3 stag_hunters: 7 rabbits + 1 stag for modeler. Tried
+  stag once, mostly hunted rabbits when stag_hunters didn't show.
+- (c) modeler + 3 moose_hunters: ~15 rabbits, modeler dominated. The
+  moose_hunters' own coordination is flaky (see subgoal 2 notes), so
+  the modeler appropriately fell back.
+- (d) modeler + 3 elephant_hunters: modeler 9 rabbits + 1 boar, top
+  score. Same reason.
+- (e) modeler + coordinator + sidekick: 19 rabbits, modeler 5, all
+  reasonable. No big game cooperation between this mix in 60s.
+- (f) 4 modelers self-play: 17 rabbits + 4 boars + 1 stag. Boar is a
+  2-player capture — multiple boars caught means modelers
+  *cooperated*, not just opportunistically hunted rabbits.
+
+Observations:
+- Within-round learning is constrained by game length. 60s isn't long
+  enough for a stable per-color model to build up; the bot mostly runs
+  on its optimistic priors and adapts at the *behavior* level rather
+  than at the *trust* level. Pass between rounds in tournament mode
+  would let learning compound.
+- Trust update is asymmetric: one success → full trust; five failures
+  → distrust. This biases toward exploration, which matters because
+  many "failures" are actually game-mechanics (fleeing prey) not
+  partner incompetence.
+- The detection mechanism is approximate (within 1 tile of glow). In
+  practice this misattributes occasionally — e.g. for Moose where the
+  glow can appear on a player adjacent to *a different* recently-
+  vanished prey. The error gets washed out by many observations but
+  shows up as noise in short games.
+
+## Subgoal 4 next
+
+The recurring theme of subgoals 1–3 is that big-game captures are
+*hard* because of the flee dynamics + the energy budget + the per-
+hunter movement cadence. With current parameters, even a deliberate
+strategy can't reliably capture moose or elephant in a 60s game.
+Subgoal 4 should:
+
+1. Audit `PreyFleeProb*` for kind-asymmetry. Maybe an elephant should
+   flee at ~25% rather than 75% when a hunter is adjacent.
+2. Audit reward magnitudes. Elephant gives 18 points; if it's
+   captured ~1/10 the rate of stags (5 pts), the expected value is
+   only 1.8 — well below a determined rabbit hunter's 1.0 × ~12
+   rabbits/min.
+3. Maybe reduce `PreyThinkIntervalTicks` for rabbits so they spawn
+   pressure, and increase for big game so encirclement has more time.
