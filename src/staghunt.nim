@@ -42,10 +42,22 @@ const
   # player it tries to step onto gets trampled (-30 energy + red glow)
   # and the elephant stops one tile short. So you can't trap it unless
   # everyone is on the four sides at the same tick.
-  ElephantThinkMin = 4               # ticks between moves when surrounded
-  ElephantThinkMax = 30              # ticks between moves when alone
-  ElephantNearRadius = 4             # players within this radius count as "nearby"
+  # Elephant cadence. We deliberately don't scale with nearby hunters —
+  # the elephant is a big calm animal that wanders on its own schedule.
+  # Scaling-up cadence near hunters made tramples too frequent.
+  ElephantThinkMin = 12              # ticks between moves
+  ElephantThinkMax = 24              # ticks between moves
   ElephantTrampleEnergyLoss = 30
+  # Trample animation: how many ticks the elephant takes to slide from
+  # its original tile through the trampled player's tile and onto the
+  # far tile. Logical position is frozen during the animation; visual
+  # position interpolates by 2*StagTileSize over `TrampleAnimSteps` frames.
+  TrampleAnimSteps = 4
+  # Stride: probability (per think) that the elephant starts a charge
+  # in the same direction, and the number of additional steps.
+  ElephantStrideProb = 30       # percent chance per think to start a stride
+  ElephantStrideMin = 1         # extra steps beyond the initial one
+  ElephantStrideMax = 3         # so a charge is 2 to 4 tiles total
 
   KillGlowTicks = 20         # yellow halo on the killers
   TrampleGlowTicks = 20      # red halo on trampled players
@@ -156,6 +168,11 @@ type
     maxTicks: int
     maxGames: int
     closedRoster: bool
+    # Test mode: spawn only elephants, and spawn the first one right
+    # next to the cluster of players so encounters happen immediately.
+    # Useful for iterating on catch dynamics without waiting for the
+    # explore phase. Set via "focus": "elephant" in the config JSON.
+    focusElephant: bool
 
   PlayerStats = object
     catches: array[PreyKind, int]
@@ -185,6 +202,19 @@ type
     tileY: int
     thinkCooldown: int
     alertFlash: int
+    # Elephant trample-animation state. Non-zero means the elephant is
+    # mid-leap over a trampled player tile; the logical position stays
+    # frozen until the animation completes. trampleDx/Dy is the
+    # cardinal direction of the push (-1, 0, 1).
+    trampleStep: int
+    trampleDx: int
+    trampleDy: int
+    # Stride: elephant occasionally chains several moves in the same
+    # cardinal direction (a "charge"). While strideRemaining > 0, the
+    # next think reuses strideDx/Dy and uses the minimum cooldown.
+    strideRemaining: int
+    strideDx: int
+    strideDy: int
 
   Corpse = object
     tileX: int
@@ -210,6 +240,7 @@ type
     tickCount: int
     respawnCooldown: int
     stats: seq[PlayerStats]
+    focusElephant: bool        # test mode: only spawn elephants, near players
     treeSprite: RgbaSprite
     rockSprite: RgbaSprite
     backgroundSprite: RgbaSprite
@@ -295,7 +326,8 @@ proc defaultGameConfig(): GameConfig =
     seed: DefaultSeed,
     maxTicks: 0,
     maxGames: 0,
-    closedRoster: false
+    closedRoster: false,
+    focusElephant: false
   )
 
 proc parseGameConfig(jsonStr: string): GameConfig =
@@ -317,6 +349,10 @@ proc parseGameConfig(jsonStr: string): GameConfig =
       if t.len > 0:
         result.closedRoster = true
         break
+  if node.hasKey("focus"):
+    let focus = node["focus"].getStr("")
+    if focus == "elephant":
+      result.focusElephant = true
 
 proc repoDir(): string = getCurrentDir() / ".."
 proc clientDataDir(): string = repoDir() / "client" / "data"
@@ -635,10 +671,17 @@ proc addPlayer(sim: var SimServer, name = "", slot = -1): int =
   sim.players.high
 
 proc addPrey(sim: var SimServer, kind: PreyKind) =
-  let
+  var cx, cy: int
+  if sim.focusElephant and kind == Elephant and sim.players.len > 0:
+    # In focus mode, drop the elephant right near the player cluster so
+    # we test catch dynamics without any explore phase.
+    let pivot = sim.players[sim.rng.rand(sim.players.len - 1)]
+    cx = pivot.tileX + sim.rng.rand(5) - 2
+    cy = pivot.tileY + sim.rng.rand(5) - 2
+  else:
     cx = 1 + sim.rng.rand(WorldWidthTiles - 3)
     cy = 1 + sim.rng.rand(WorldHeightTiles - 3)
-    spot = sim.findOpenTileNear(cx, cy, 10)
+  let spot = sim.findOpenTileNear(cx, cy, 10)
   if not spot.ok:
     return
   sim.prey.add Prey(
@@ -704,6 +747,8 @@ proc maintainPrey(sim: var SimServer) =
   var spawnedKind = PreyKind.low
   var spawned = false
   for kind in PreyKind:
+    if sim.focusElephant and kind != Elephant:
+      continue  # focus mode skips all other prey kinds
     if preyCatchable(kind, playerCount) and sim.countKind(kind) < targetFor(kind):
       sim.addPrey(kind)
       spawnedKind = kind
@@ -809,28 +854,43 @@ proc thinkElephant(sim: var SimServer, preyIndex: int): int =
   ## (-30 energy + red glow) and stays put. Walls just block.
   ## Returns the next thinkCooldown to apply.
   template p: untyped = sim.prey[preyIndex]
-  var nearby = 0
-  for pl in sim.players:
-    let d = chebyshevDistance(p.tileX, p.tileY, pl.tileX, pl.tileY)
-    if d <= ElephantNearRadius:
-      inc nearby
-  let
-    span = ElephantThinkMax - ElephantThinkMin
-    base = ElephantThinkMax - min(nearby, 4) * (span div 4)
-    jitter = sim.rng.rand(base div 5 + 1) - (base div 10)
-  result = max(ElephantThinkMin, base + jitter)
 
-  let dirOrd = sim.rng.rand(3)
-  let (dx, dy) =
-    case dirOrd
-    of 0: (0, -1)
-    of 1: (1, 0)
-    of 2: (0, 1)
-    else: (-1, 0)
+  # If a stride is in progress, keep the same direction and use the
+  # minimum cadence so the charge looks continuous. Otherwise pick a
+  # new direction at random *among non-wall directions* so the elephant
+  # doesn't waste turns bumping the map edge. Players in the chosen
+  # direction are fine — that's where trample comes from.
+  var dx: int
+  var dy: int
+  if p.strideRemaining > 0:
+    dx = p.strideDx
+    dy = p.strideDy
+    dec p.strideRemaining
+    result = ElephantThinkMin
+  else:
+    const allDirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+    var openDirs: seq[tuple[dx, dy: int]] = @[]
+    for d in allDirs:
+      let
+        nx = p.tileX + d[0]
+        ny = p.tileY + d[1]
+      if inTileBounds(nx, ny) and not sim.tileIsBlocked(nx, ny):
+        openDirs.add(d)
+    if openDirs.len == 0:
+      result = ElephantThinkMin +
+        sim.rng.rand(ElephantThinkMax - ElephantThinkMin)
+      return
+    let pick = openDirs[sim.rng.rand(openDirs.len - 1)]
+    dx = pick.dx
+    dy = pick.dy
+    result = ElephantThinkMin +
+      sim.rng.rand(ElephantThinkMax - ElephantThinkMin)
+
   let
     nx = p.tileX + dx
     ny = p.tileY + dy
   if not inTileBounds(nx, ny) or sim.tileIsBlocked(nx, ny):
+    p.strideRemaining = 0  # cancel charge on hitting a wall
     return
   let playerIdx = sim.playerAt(nx, ny)
   if playerIdx >= 0:
@@ -843,11 +903,30 @@ proc thinkElephant(sim: var SimServer, preyIndex: int): int =
       "name": sim.players[playerIdx].name,
       "energy_after": sim.players[playerIdx].energy
     })
+    # Push-through animation: the elephant will end up one tile past
+    # the trampled player. We *don't* commit the logical position now —
+    # we set trampleStep so the render code slides the elephant over
+    # the player's tile across several frames, then the move completes.
+    # If the far tile is blocked the elephant stays put after the
+    # animation, which is what lets a fully-encircled elephant get
+    # captured (nowhere to jump out to).
+    p.trampleStep = TrampleAnimSteps
+    p.trampleDx = dx
+    p.trampleDy = dy
     return
   if sim.preyAt(nx, ny, exceptIndex = preyIndex) >= 0:
+    p.strideRemaining = 0
     return
   p.tileX = nx
   p.tileY = ny
+  # On a clean step (not a trample, not on stride), occasionally start a
+  # charge in the same direction. Trample-jumps already feel like a
+  # rush; we don't pile a stride on top.
+  if p.strideRemaining == 0 and sim.rng.rand(99) < ElephantStrideProb:
+    p.strideRemaining = ElephantStrideMin +
+      sim.rng.rand(ElephantStrideMax - ElephantStrideMin)
+    p.strideDx = dx
+    p.strideDy = dy
 
 proc thinkPrey(sim: var SimServer, preyIndex: int) =
   template p: untyped = sim.prey[preyIndex]
@@ -855,11 +934,27 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
   if p.alertFlash > 0:
     dec p.alertFlash
 
+  # Trample animation runs at full server tick rate (independent of
+  # thinkCooldown) so the elephant's pixel-level slide is smooth and
+  # doesn't start a new think mid-leap. When the counter hits zero,
+  # commit the logical position to two tiles past where we started.
+  if p.kind == Elephant and p.trampleStep > 0:
+    dec p.trampleStep
+    if p.trampleStep == 0:
+      let
+        fx = p.tileX + p.trampleDx * 2
+        fy = p.tileY + p.trampleDy * 2
+      if inTileBounds(fx, fy) and not sim.tileIsBlocked(fx, fy) and
+          sim.playerAt(fx, fy) < 0 and
+          sim.preyAt(fx, fy, exceptIndex = preyIndex) < 0:
+        p.tileX = fx
+        p.tileY = fy
+    return
+
   if p.thinkCooldown > 0:
     dec p.thinkCooldown
     return
   if p.kind == Elephant:
-    # Elephant has its own dynamic cadence (faster when surrounded).
     p.thinkCooldown = sim.thinkElephant(preyIndex)
     return
 
@@ -1380,13 +1475,26 @@ proc addPreyObjects(
         screenX += 1
       else:
         screenX -= 1
+    var preyZ = screenY + 2
+    # Trample slide: elephant interpolates from its original tile across
+    # the trampled player's tile to the far tile. Slide totals 2 tiles
+    # (= 2 * StagTileSize px) over TrampleAnimSteps frames. Use a high
+    # z while sliding so the elephant draws over the player it's
+    # passing through.
+    if prey.kind == Elephant and prey.trampleStep > 0:
+      let progress = TrampleAnimSteps - prey.trampleStep + 1
+      let pixelOffset =
+        (progress * 2 * StagTileSize) div (TrampleAnimSteps + 1)
+      screenX += prey.trampleDx * pixelOffset
+      screenY += prey.trampleDy * pixelOffset
+      preyZ = screenY + 200
     if screenX + size <= 0 or screenY + size <= 0:
       continue
     if screenX >= viewportWidth or screenY >= viewportHeight:
       continue
     packet.addObject(
       PreyObjectBase + i,
-      screenX, screenY, screenY + 2,
+      screenX, screenY, preyZ,
       MapLayerId, preySpriteId(prey.kind)
     )
 
@@ -2013,6 +2121,7 @@ proc runServerLoop(
     roundEndTick = 0
     gamesPlayed = 0
     roundScores: seq[seq[int]] = @[]
+  sim.focusElephant = config.focusElephant
 
   while true:
     var

@@ -304,6 +304,32 @@ proc updateObstacleMap(bot: var Bot) =
     else:
       discard
 
+proc navigateAvoiding(
+  bot: var Bot, targetX, targetY: int,
+  blocked: openArray[tuple[x, y: int]]
+): uint8 =
+  ## BFS that also treats `blocked` tiles as impassable for this call
+  ## only. Used to route around visible allies — without this the path
+  ## planner happily routes through an ally tile, the server denies
+  ## the step, and the bot bounces forever.
+  var saved: seq[tuple[x, y: int, prev: TileStatus]] = @[]
+  for b in blocked:
+    if not inBounds(b.x, b.y): continue
+    if b.x == targetX and b.y == targetY: continue
+    if b.x == bot.selfTileX and b.y == bot.selfTileY: continue
+    saved.add((b.x, b.y, bot.obstacleMap.getTile(b.x, b.y)))
+    bot.obstacleMap.markTile(b.x, b.y, TileBlocked)
+  defer:
+    for s in saved:
+      bot.obstacleMap.markTile(s.x, s.y, s.prev)
+  if bot.stuckCount >= 15:
+    let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
+    bot.updateStuckState(mask)
+    return mask
+  let mask = pathStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, targetX, targetY)
+  bot.updateStuckState(mask)
+  mask
+
 proc navigate(bot: var Bot, targetX, targetY: int): uint8 =
   if bot.stuckCount >= 15:
     let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
@@ -524,9 +550,13 @@ proc decideMask(bot: var Bot): uint8 =
   bot.adjacentWaitTicks = 0
   bot.lastAdjacentPreyId = -1
 
-  # If we can see an ally that's more than 3 tiles away, close the gap a
-  # bit. Tile 3 keeps room for both to move toward a freshly-visible stag
-  # without piling on the same tile.
+  # Route around visible allies during exploration — without this, two
+  # bots heading to the same quadrant target collide and oscillate.
+  var blocked: seq[tuple[x, y: int]] = @[]
+  for pl in players:
+    if pl.objectId != bot.selfObjectId:
+      blocked.add((pl.tileX, pl.tileY))
+
   var nearestAlly: PlayerSight
   var nearestAllyDist = high(int)
   for pl in players:
@@ -536,7 +566,7 @@ proc decideMask(bot: var Bot): uint8 =
       nearestAllyDist = d
       nearestAlly = pl
   if nearestAlly.found and nearestAllyDist > 3:
-    return bot.navigate(nearestAlly.tileX, nearestAlly.tileY)
+    return bot.navigateAvoiding(nearestAlly.tileX, nearestAlly.tileY, blocked)
 
   inc bot.exploreTargetAge
   let atTarget = (bot.selfTileX == bot.exploreTargetX and
@@ -544,7 +574,7 @@ proc decideMask(bot: var Bot): uint8 =
   if atTarget or bot.exploreTargetAge > 200 or bot.stuckCount > 30:
     bot.pickExploreTarget()
 
-  bot.navigate(bot.exploreTargetX, bot.exploreTargetY)
+  bot.navigateAvoiding(bot.exploreTargetX, bot.exploreTargetY, blocked)
 
 proc playerInputBlob(mask: uint8): string =
   blobFromBytes([0x84'u8, mask and 0x7f'u8])

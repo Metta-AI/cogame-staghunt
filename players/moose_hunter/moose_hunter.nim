@@ -359,29 +359,25 @@ proc chooseMoose(
   players: openArray[PlayerSight],
   selfObjectId: int
 ): PreySight =
-  ## Picks the moose that minimizes total-hunters-distance so 3+ hunters
-  ## with the same view converge on the same one. (Previously used a
-  ## per-hunter myDist + crowding rule which let hunters split between
-  ## moose and leave both uncaptured.) Cooperation bonus pulls in when
-  ## an ally is already adjacent; skip moose with 3+ allies adjacent
-  ## (capture imminent without us).
+  ## Pick the moose whose farthest visible hunter is closest, so all
+  ## hunters with the same view converge on the same one. Cooperation
+  ## bonus pulls in when allies are already adjacent.
   var bestCost = high(int)
   for p in prey:
     if p.kind != Moose:
       continue
-    let myDist = chebyshev(selfX, selfY, p.tileX, p.tileY)
-    var allyDistSum = 0
+    var maxHunterDist = chebyshev(selfX, selfY, p.tileX, p.tileY)
     var alliesAdjacent = 0
     for pl in players:
       if pl.objectId == selfObjectId: continue
-      let allyDist = chebyshev(pl.tileX, pl.tileY, p.tileX, p.tileY)
-      allyDistSum += allyDist
-      if allyDist == 1: inc alliesAdjacent
+      let d = chebyshev(pl.tileX, pl.tileY, p.tileX, p.tileY)
+      if d > maxHunterDist: maxHunterDist = d
+      if d == 1: inc alliesAdjacent
     if alliesAdjacent >= RequiredMoose:
       continue
     let
-      cooperationBonus = -10 * alliesAdjacent
-      cost = myDist + allyDistSum + cooperationBonus
+      cooperationBonus = -3 * alliesAdjacent
+      cost = maxHunterDist + cooperationBonus
     if cost < bestCost or
         (cost == bestCost and result.found and p.objectId < result.objectId):
       bestCost = cost
@@ -543,9 +539,13 @@ proc decideMask(bot: var Bot): uint8 =
   bot.adjacentWaitTicks = 0
   bot.lastAdjacentPreyId = -1
 
-  # If we can see an ally that's more than 3 tiles away, close the gap.
-  # Distance 3 leaves room for several to converge on a moose without
-  # piling on the same tile.
+  # Route around visible allies during exploration — without this, two
+  # bots heading to the same quadrant target collide and oscillate.
+  var blocked: seq[tuple[x, y: int]] = @[]
+  for pl in players:
+    if pl.objectId != bot.selfObjectId:
+      blocked.add((pl.tileX, pl.tileY))
+
   var nearestAlly: PlayerSight
   var nearestAllyDist = high(int)
   for pl in players:
@@ -555,7 +555,7 @@ proc decideMask(bot: var Bot): uint8 =
       nearestAllyDist = d
       nearestAlly = pl
   if nearestAlly.found and nearestAllyDist > 3:
-    return bot.navigate(nearestAlly.tileX, nearestAlly.tileY)
+    return bot.navigateAvoiding(nearestAlly.tileX, nearestAlly.tileY, blocked)
 
   inc bot.exploreTargetAge
   let atTarget = (bot.selfTileX == bot.exploreTargetX and
@@ -563,7 +563,7 @@ proc decideMask(bot: var Bot): uint8 =
   if atTarget or bot.exploreTargetAge > 200 or bot.stuckCount > 30:
     bot.pickExploreTarget()
 
-  bot.navigate(bot.exploreTargetX, bot.exploreTargetY)
+  bot.navigateAvoiding(bot.exploreTargetX, bot.exploreTargetY, blocked)
 
 proc playerInputBlob(mask: uint8): string =
   blobFromBytes([0x84'u8, mask and 0x7f'u8])
