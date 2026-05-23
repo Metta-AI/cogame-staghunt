@@ -304,6 +304,30 @@ proc updateObstacleMap(bot: var Bot) =
     else:
       discard
 
+proc navigateAvoiding(
+  bot: var Bot, targetX, targetY: int,
+  blocked: openArray[tuple[x, y: int]]
+): uint8 =
+  ## See elephant_hunter for rationale. Marks `blocked` tiles as
+  ## impassable for this BFS only.
+  var saved: seq[tuple[x, y: int, prev: TileStatus]] = @[]
+  for b in blocked:
+    if not inBounds(b.x, b.y): continue
+    if b.x == targetX and b.y == targetY: continue
+    if b.x == bot.selfTileX and b.y == bot.selfTileY: continue
+    saved.add((b.x, b.y, bot.obstacleMap.getTile(b.x, b.y)))
+    bot.obstacleMap.markTile(b.x, b.y, TileBlocked)
+  defer:
+    for s in saved:
+      bot.obstacleMap.markTile(s.x, s.y, s.prev)
+  if bot.stuckCount >= 15:
+    let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
+    bot.updateStuckState(mask)
+    return mask
+  let mask = pathStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, targetX, targetY)
+  bot.updateStuckState(mask)
+  mask
+
 proc navigate(bot: var Bot, targetX, targetY: int): uint8 =
   if bot.stuckCount >= 15:
     let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
@@ -335,31 +359,29 @@ proc chooseMoose(
   players: openArray[PlayerSight],
   selfObjectId: int
 ): PreySight =
-  ## Picks a moose to pursue. A moose with `RequiredMoose` allies already
-  ## adjacent is going to be captured by them — look elsewhere. With one
-  ## or two allies adjacent, take the cooperation bonus. Crowding kicks in
-  ## only when we'd be the (RequiredMoose+1)-th hunter committed.
-  ## Deterministic objectId tiebreak so independent hunters with the same
-  ## view make the same choice.
+  ## Picks the moose that minimizes total-hunters-distance so 3+ hunters
+  ## with the same view converge on the same one. (Previously used a
+  ## per-hunter myDist + crowding rule which let hunters split between
+  ## moose and leave both uncaptured.) Cooperation bonus pulls in when
+  ## an ally is already adjacent; skip moose with 3+ allies adjacent
+  ## (capture imminent without us).
   var bestCost = high(int)
   for p in prey:
     if p.kind != Moose:
       continue
     let myDist = chebyshev(selfX, selfY, p.tileX, p.tileY)
-    var alliesCloser = 0
+    var allyDistSum = 0
     var alliesAdjacent = 0
     for pl in players:
       if pl.objectId == selfObjectId: continue
       let allyDist = chebyshev(pl.tileX, pl.tileY, p.tileX, p.tileY)
-      if allyDist < myDist: inc alliesCloser
+      allyDistSum += allyDist
       if allyDist == 1: inc alliesAdjacent
     if alliesAdjacent >= RequiredMoose:
-      continue  # moose is already being captured by them
+      continue
     let
-      cooperationBonus = -8 * alliesAdjacent
-      # Crowding when we'd be the 4th committed hunter (3 already closer).
-      crowdingPenalty = max(0, alliesCloser - (RequiredMoose - 1)) * 8
-      cost = myDist + crowdingPenalty + cooperationBonus
+      cooperationBonus = -10 * alliesAdjacent
+      cost = myDist + allyDistSum + cooperationBonus
     if cost < bestCost or
         (cost == bestCost and result.found and p.objectId < result.objectId):
       bestCost = cost
@@ -394,13 +416,14 @@ proc sideOccupied(sides: OccupiedSides, ord: int): bool =
 proc bestMooseSide(
   selfX, selfY, preyX, preyY: int,
   selfObjectId: int,
-  players: openArray[PlayerSight]
+  players: openArray[PlayerSight],
+  obstacleMap: ObstacleMap
 ): tuple[x, y: int, found: bool] =
   ## Assign side by rank among visible hunters (sorted by objectId): rank
-  ## 0 prefers N first, rank 1 E, rank 2 S, rank 3 W, then cyclic.
-  ## Three hunters with the same view pick three distinct primaries; a
-  ## fourth hunter takes the remaining side. Approach direction breaks
-  ## ties only when ranks collide (e.g. one hunter can't see another).
+  ## 0 prefers N first, rank 1 E, rank 2 S, rank 3 W, then cyclic. Skip
+  ## sides occupied by another player *or blocked by an obstacle* —
+  ## without the obstacle check, a hunter assigned to a tree-blocked side
+  ## hovers next to the moose forever instead of falling through.
   let sides = occupiedSidesOf(preyX, preyY, players)
   var rank = 0
   for pl in players:
@@ -410,8 +433,6 @@ proc bestMooseSide(
     primary = rank mod 4
     dx = selfX - preyX
     dy = selfY - preyY
-    # Approach-based fallback so a hunter who can't see its sibling still
-    # picks a sensible side rather than always N.
     approachPrim =
       if abs(dx) > abs(dy):
         (if dx > 0: 1 else: 3)
@@ -426,9 +447,9 @@ proc bestMooseSide(
     let
       sx = preyX + offsets[ord][0]
       sy = preyY + offsets[ord][1]
+    if not inBounds(sx, sy): continue
+    if obstacleMap.getTile(sx, sy) == TileBlocked: continue
     return (sx, sy, true)
-  # All sides occupied — shouldn't happen since we'd have already
-  # skipped this moose, but fall through to approach side.
   let
     sx = preyX + offsets[approachPrim][0]
     sy = preyY + offsets[approachPrim][1]
@@ -505,11 +526,15 @@ proc decideMask(bot: var Bot): uint8 =
 
     let side = bestMooseSide(
       bot.selfTileX, bot.selfTileY, moose.tileX, moose.tileY,
-      bot.selfObjectId, players
+      bot.selfObjectId, players, bot.obstacleMap
     )
+    var blocked: seq[tuple[x, y: int]] = @[]
+    for pl in players:
+      if pl.objectId != bot.selfObjectId:
+        blocked.add((pl.tileX, pl.tileY))
     if side.found:
-      return bot.navigate(side.x, side.y)
-    return bot.navigate(moose.tileX, moose.tileY)
+      return bot.navigateAvoiding(side.x, side.y, blocked)
+    return bot.navigateAvoiding(moose.tileX, moose.tileY, blocked)
 
   # No moose visible. A lone or paired moose_hunter cannot capture
   # anything (needs 3), so explore doubles as "stay close enough to two

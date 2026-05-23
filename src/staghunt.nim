@@ -35,7 +35,20 @@ const
   MoveEnergyCost = 2
   PassiveRechargeInterval = 18
 
+  # Elephant behavior — different from other prey. It doesn't really run
+  # away (it can't be caught alone anyway). Instead it steps cardinally
+  # one tile at a time, but *faster* the more hunters are nearby — too
+  # fast for hunters to keep up unless they're already positioned. Any
+  # player it tries to step onto gets trampled (-30 energy + red glow)
+  # and the elephant stops one tile short. So you can't trap it unless
+  # everyone is on the four sides at the same tick.
+  ElephantThinkMin = 4               # ticks between moves when surrounded
+  ElephantThinkMax = 30              # ticks between moves when alone
+  ElephantNearRadius = 4             # players within this radius count as "nearby"
+  ElephantTrampleEnergyLoss = 30
+
   KillGlowTicks = 20         # yellow halo on the killers
+  TrampleGlowTicks = 20      # red halo on trampled players
   CorpseLifetimeTicks = 48   # how long a corpse blob lingers on the tile
   AlertFlashTicks = 6
 
@@ -83,6 +96,7 @@ const
   RockSpriteId = 2
   CorpseSpriteId = 4         # one shared "dead prey" blob
   KillGlowSpriteId = 5       # one shared yellow halo
+  TrampleGlowSpriteId = 6    # one shared red halo for trampled players
   PreySpriteBase = 10        # + PreyKind.ord (0..4)
   NumPlayerColors = 20
   PlayerSpriteBase = 100     # + colorSlot * 4 + facing.ord  (0..79)
@@ -91,6 +105,7 @@ const
   PlayerObjectBase = 5000    # + array index
   CorpseObjectBase = 6000    # + array index
   KillGlowObjectBase = 7000  # + player array index
+  TrampleGlowObjectBase = 7100  # + player array index (after KillGlow range)
   IndicatorObjectBase = 9000 # + preyIndex * 4 + sideOrd
   PreyObjectBase = 10000     # + array index
 
@@ -157,6 +172,7 @@ type
     score: int
     moveCooldown: int
     killGlow: int
+    trampleGlow: int
     rechargeCounter: int
     colorIndex: int
     overlayActive: bool
@@ -199,6 +215,7 @@ type
     backgroundSprite: RgbaSprite
     corpseSprite: RgbaSprite
     killGlowSprite: RgbaSprite
+    trampleGlowSprite: RgbaSprite
     preySprites: array[5, RgbaSprite]      # by PreyKind.ord
     playerSprites: array[NumPlayerColors * 4, RgbaSprite] # by colorSlot * 4 + facing.ord
     indicatorSprites: array[3, RgbaSprite]  # 1-dot, 2-dot, 3-dot
@@ -455,6 +472,27 @@ const
     "..8..........8..",
     "...8........8...",
     "....88888888....",
+  ]
+
+  # Trample glow: 16x16 red ring around a trampled player. Palette
+  # index 3 is red.
+  TrampleGlowPattern = [
+    "....33333333....",
+    "...3........3...",
+    "..3..........3..",
+    ".3............3.",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    "3..............3",
+    ".3............3.",
+    "..3..........3..",
+    "...3........3...",
+    "....33333333....",
   ]
 
   # Indicator dots: 4x4 yellow dots showing how many more players needed.
@@ -714,6 +752,9 @@ proc applyPlayerInput(sim: var SimServer, playerIndex: int, input: InputState) =
   if p.killGlow > 0:
     dec p.killGlow
 
+  if p.trampleGlow > 0:
+    dec p.trampleGlow
+
   if p.moveCooldown > 0:
     dec p.moveCooldown
     return
@@ -758,6 +799,56 @@ proc tryPreyMove(sim: var SimServer, preyIndex, dx, dy: int): bool =
     return true
   false
 
+proc thinkElephant(sim: var SimServer, preyIndex: int): int =
+  ## Elephant moves one cardinal tile at random. The next thinkCooldown
+  ## is dynamic: more hunters nearby = faster steps, down to
+  ## ElephantThinkMin. With no hunters in sight it lumbers slowly.
+  ## Random ±20% on top so the cadence isn't perfectly predictable.
+  ##
+  ## If the elephant tries to step into a player tile, it tramples them
+  ## (-30 energy + red glow) and stays put. Walls just block.
+  ## Returns the next thinkCooldown to apply.
+  template p: untyped = sim.prey[preyIndex]
+  var nearby = 0
+  for pl in sim.players:
+    let d = chebyshevDistance(p.tileX, p.tileY, pl.tileX, pl.tileY)
+    if d <= ElephantNearRadius:
+      inc nearby
+  let
+    span = ElephantThinkMax - ElephantThinkMin
+    base = ElephantThinkMax - min(nearby, 4) * (span div 4)
+    jitter = sim.rng.rand(base div 5 + 1) - (base div 10)
+  result = max(ElephantThinkMin, base + jitter)
+
+  let dirOrd = sim.rng.rand(3)
+  let (dx, dy) =
+    case dirOrd
+    of 0: (0, -1)
+    of 1: (1, 0)
+    of 2: (0, 1)
+    else: (-1, 0)
+  let
+    nx = p.tileX + dx
+    ny = p.tileY + dy
+  if not inTileBounds(nx, ny) or sim.tileIsBlocked(nx, ny):
+    return
+  let playerIdx = sim.playerAt(nx, ny)
+  if playerIdx >= 0:
+    sim.players[playerIdx].energy =
+      max(0, sim.players[playerIdx].energy - ElephantTrampleEnergyLoss)
+    sim.players[playerIdx].trampleGlow = TrampleGlowTicks
+    logEvent(sim.tickCount, "trample", %*{
+      "elephant_id": p.id,
+      "slot": sim.players[playerIdx].slot,
+      "name": sim.players[playerIdx].name,
+      "energy_after": sim.players[playerIdx].energy
+    })
+    return
+  if sim.preyAt(nx, ny, exceptIndex = preyIndex) >= 0:
+    return
+  p.tileX = nx
+  p.tileY = ny
+
 proc thinkPrey(sim: var SimServer, preyIndex: int) =
   template p: untyped = sim.prey[preyIndex]
 
@@ -767,6 +858,11 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
   if p.thinkCooldown > 0:
     dec p.thinkCooldown
     return
+  if p.kind == Elephant:
+    # Elephant has its own dynamic cadence (faster when surrounded).
+    p.thinkCooldown = sim.thinkElephant(preyIndex)
+    return
+
   # Bigger animals think slower — gives big-game hunting parties more
   # window to complete encirclement before the prey hops out again.
   p.thinkCooldown =
@@ -775,7 +871,7 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
     of Boar: PreyThinkIntervalTicks + 4     # 14
     of Stag: PreyThinkIntervalTicks + 6     # 16
     of Moose: PreyThinkIntervalTicks + 10   # 20
-    of Elephant: PreyThinkIntervalTicks + 14 # 24
+    of Elephant: PreyThinkIntervalTicks     # unreachable; handled above
 
   var nearestDist = high(int)
   var nearestX = 0
@@ -806,7 +902,7 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
       of Rabbit: baseProb
       of Boar: (baseProb * 80) div 100      # 60 / 40 / 20
       of Stag: (baseProb * 70) div 100      # 52 / 35 / 17
-      of Moose: (baseProb * 45) div 100     # 33 / 22 / 11
+      of Moose: (baseProb * 40) div 100     # 30 / 20 / 10
       of Elephant: (baseProb * 25) div 100  # 18 / 12 / 6
     if sim.rng.rand(99) < fleeProb:
       let dx = signOf(p.tileX - nearestX)
@@ -1128,6 +1224,7 @@ proc buildSpriteCache(sim: var SimServer) =
   sim.corpseSprite = loadPngSprite(dir / "ded.png")
 
   sim.killGlowSprite = patternToRgbaSprite(KillGlowPattern)
+  sim.trampleGlowSprite = patternToRgbaSprite(TrampleGlowPattern)
 
   const preyFileNames: array[5, string] = ["rabbit", "boar", "stag", "moose", "elephant"]
   for kind in PreyKind:
@@ -1175,6 +1272,7 @@ proc addSpriteProtocolInit(
   packet.addSprite(RockSpriteId, sim.rockSprite, "rock")
   packet.addSprite(CorpseSpriteId, sim.corpseSprite, "corpse")
   packet.addSprite(KillGlowSpriteId, sim.killGlowSprite, "kill glow")
+  packet.addSprite(TrampleGlowSpriteId, sim.trampleGlowSprite, "trample glow")
   for kind in PreyKind:
     packet.addSprite(preySpriteId(kind), sim.preySprites[kind.ord], $kind)
   for colorSlot in 0 ..< NumPlayerColors:
@@ -1428,6 +1526,14 @@ proc addPlayerObjects(
         screenX + glowOffset, screenY + glowOffset, screenY + 4,
         MapLayerId, KillGlowSpriteId
       )
+    # Red trample halo on players the elephant ran into. Pulses the same
+    # way the kill glow does so the visual language stays consistent.
+    if player.trampleGlow > 0 and (player.trampleGlow div 3) mod 2 == 0:
+      packet.addObject(
+        TrampleGlowObjectBase + i,
+        screenX + glowOffset, screenY + glowOffset, screenY + 4,
+        MapLayerId, TrampleGlowSpriteId
+      )
 
 proc addHudObjects(packet: var seq[uint8], score, energy: int) =
   var objIdx = 0
@@ -1571,6 +1677,9 @@ proc step(sim: var SimServer, inputs: openArray[InputState]) =
 
   # Periodic positional snapshot — every 60 ticks (~2.5s). Useful for
   # spotting "why didn't the hunters converge?" without per-frame spam.
+  # The first snapshot also includes the obstacle map so a viewer can
+  # render the world; subsequent ones skip it (obstacles never change
+  # mid-round).
   if eventLogActive and (sim.tickCount mod 60 == 0):
     var playersArr = newJArray()
     for p in sim.players:
@@ -1581,9 +1690,15 @@ proc step(sim: var SimServer, inputs: openArray[InputState]) =
     var preyArr = newJArray()
     for p in sim.prey:
       preyArr.add(%*{"kind": $p.kind, "x": p.tileX, "y": p.tileY})
-    logEvent(sim.tickCount, "snapshot", %*{
-      "players": playersArr, "prey": preyArr
-    })
+    var snapshot = %*{"players": playersArr, "prey": preyArr}
+    if sim.tickCount == 60:
+      var obstacleArr = newJArray()
+      for ty in 0 ..< WorldHeightTiles:
+        for tx in 0 ..< WorldWidthTiles:
+          if sim.tileIsBlocked(tx, ty):
+            obstacleArr.add(%*[tx, ty])
+      snapshot["obstacles"] = obstacleArr
+    logEvent(sim.tickCount, "snapshot", snapshot)
 
 # ---------------------------------------------------------------------------
 # WebSocket plumbing (modelled on big_adventure)
@@ -1805,6 +1920,7 @@ proc resetRound(sim: var SimServer, config: GameConfig, gamesPlayed: int) =
     sim.players[i].score = 0
     sim.players[i].moveCooldown = 0
     sim.players[i].killGlow = 0
+    sim.players[i].trampleGlow = 0
     sim.players[i].rechargeCounter = 0
     sim.players[i].overlayActive = false
 

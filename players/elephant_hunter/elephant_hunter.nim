@@ -304,6 +304,32 @@ proc updateObstacleMap(bot: var Bot) =
     else:
       discard
 
+proc navigateAvoiding(
+  bot: var Bot, targetX, targetY: int,
+  blocked: openArray[tuple[x, y: int]]
+): uint8 =
+  ## BFS that also treats `blocked` tiles as impassable for this call
+  ## only. Used to route around visible allies — without this the path
+  ## planner happily routes through an ally tile, the server denies the
+  ## step, and the bot bounces forever.
+  var saved: seq[tuple[x, y: int, prev: TileStatus]] = @[]
+  for b in blocked:
+    if not inBounds(b.x, b.y): continue
+    if b.x == targetX and b.y == targetY: continue  # the target itself
+    if b.x == bot.selfTileX and b.y == bot.selfTileY: continue
+    saved.add((b.x, b.y, bot.obstacleMap.getTile(b.x, b.y)))
+    bot.obstacleMap.markTile(b.x, b.y, TileBlocked)
+  defer:
+    for s in saved:
+      bot.obstacleMap.markTile(s.x, s.y, s.prev)
+  if bot.stuckCount >= 15:
+    let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
+    bot.updateStuckState(mask)
+    return mask
+  let mask = pathStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, targetX, targetY)
+  bot.updateStuckState(mask)
+  mask
+
 proc navigate(bot: var Bot, targetX, targetY: int): uint8 =
   if bot.stuckCount >= 15:
     let mask = unstickStep(bot.obstacleMap, bot.selfTileX, bot.selfTileY, bot.frameTick)
@@ -335,28 +361,30 @@ proc chooseElephant(
   players: openArray[PlayerSight],
   selfObjectId: int
 ): PreySight =
-  ## Picks an elephant to pursue. An elephant with 4 allies already
-  ## adjacent is fully covered. Cooperation bonus proportional to how
-  ## many sides are already claimed; crowding only kicks in when we'd
-  ## be the 5th committed hunter. Deterministic objectId tiebreak.
+  ## Elephants need ALL FOUR sides — if the four hunters split between
+  ## two elephants neither gets captured. So this picks the elephant
+  ## that minimizes total-hunters-distance: any hunter with the same
+  ## view of the world computes the same minimum and they all converge
+  ## on it. Strong cooperationBonus once anyone is adjacent so the
+  ## "anchor" hunter pulls the others in. Deterministic objectId
+  ## tiebreak.
   var bestCost = high(int)
   for p in prey:
     if p.kind != Elephant:
       continue
     let myDist = chebyshev(selfX, selfY, p.tileX, p.tileY)
-    var alliesCloser = 0
+    var allyDistSum = 0
     var alliesAdjacent = 0
     for pl in players:
       if pl.objectId == selfObjectId: continue
       let allyDist = chebyshev(pl.tileX, pl.tileY, p.tileX, p.tileY)
-      if allyDist < myDist: inc alliesCloser
+      allyDistSum += allyDist
       if allyDist == 1: inc alliesAdjacent
     if alliesAdjacent >= RequiredElephant:
-      continue  # elephant is already being captured by them
+      continue
     let
-      cooperationBonus = -8 * alliesAdjacent
-      crowdingPenalty = max(0, alliesCloser - (RequiredElephant - 1)) * 8
-      cost = myDist + crowdingPenalty + cooperationBonus
+      cooperationBonus = -12 * alliesAdjacent
+      cost = myDist + allyDistSum + cooperationBonus
     if cost < bestCost or
         (cost == bestCost and result.found and p.objectId < result.objectId):
       bestCost = cost
@@ -391,11 +419,15 @@ proc sideOccupied(sides: OccupiedSides, ord: int): bool =
 proc bestElephantSide(
   selfX, selfY, preyX, preyY: int,
   selfObjectId: int,
-  players: openArray[PlayerSight]
+  players: openArray[PlayerSight],
+  obstacleMap: ObstacleMap
 ): tuple[x, y: int, found: bool] =
   ## Assign side by rank among visible hunters (sorted by objectId): rank
-  ## 0 prefers N, rank 1 E, rank 2 S, rank 3 W. Four hunters with the
-  ## same view pick all four sides without coordination.
+  ## 0 prefers N, rank 1 E, rank 2 S, rank 3 W. Skip sides that are
+  ## occupied by another player *or blocked by a tree/rock*; without the
+  ## obstacle check, a hunter assigned to a wall-blocked side will hover
+  ## next to the elephant forever instead of falling through to an open
+  ## side.
   let sides = occupiedSidesOf(preyX, preyY, players)
   var rank = 0
   for pl in players:
@@ -409,6 +441,8 @@ proc bestElephantSide(
     let
       sx = preyX + offsets[ord][0]
       sy = preyY + offsets[ord][1]
+    if not inBounds(sx, sy): continue
+    if obstacleMap.getTile(sx, sy) == TileBlocked: continue
     return (sx, sy, true)
   (0, 0, false)
 
@@ -482,11 +516,17 @@ proc decideMask(bot: var Bot): uint8 =
 
     let side = bestElephantSide(
       bot.selfTileX, bot.selfTileY, elephant.tileX, elephant.tileY,
-      bot.selfObjectId, players
+      bot.selfObjectId, players, bot.obstacleMap
     )
+    # Route around visible allies — the elephant itself is left in place
+    # since we want to reach a tile *next to* it, not through it.
+    var blocked: seq[tuple[x, y: int]] = @[]
+    for pl in players:
+      if pl.objectId != bot.selfObjectId:
+        blocked.add((pl.tileX, pl.tileY))
     if side.found:
-      return bot.navigate(side.x, side.y)
-    return bot.navigate(elephant.tileX, elephant.tileY)
+      return bot.navigateAvoiding(side.x, side.y, blocked)
+    return bot.navigateAvoiding(elephant.tileX, elephant.tileY, blocked)
 
   # No elephant visible. A lone or partially-joined elephant_hunter
   # cannot capture anything (needs 4), so explore doubles as "stay close
