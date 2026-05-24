@@ -48,6 +48,8 @@ const
   ElephantThinkMin = 12              # ticks between moves
   ElephantThinkMax = 24              # ticks between moves
   ElephantTrampleEnergyLoss = 30
+  MooseGutProb = 40           # at point-blank, moose may shove instead of flee
+  MooseGutEnergyLoss = 10     # less brutal than elephant trample
   # Trample animation: how many ticks the elephant takes to slide from
   # its original tile through the trampled player's tile and onto the
   # far tile. Logical position is frozen during the animation; visual
@@ -982,17 +984,48 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
   var nearestDist = high(int)
   var nearestX = 0
   var nearestY = 0
-  for pl in sim.players:
+  var nearestPlayerIdx = -1
+  for i, pl in sim.players:
     let d = chebyshevDistance(p.tileX, p.tileY, pl.tileX, pl.tileY)
     if d < nearestDist:
       nearestDist = d
       nearestX = pl.tileX
       nearestY = pl.tileY
+      nearestPlayerIdx = i
 
   let alerted = nearestDist > 0 and nearestDist <= PreyFleeRadius
 
   if alerted:
     p.alertFlash = AlertFlashTicks
+
+    # Moose gut: when a player walks right up to a moose, it'll
+    # sometimes gore + shove them instead of fleeing. Less brutal than
+    # an elephant trample (10 vs 30 energy) but the displacement breaks
+    # the surround attempt. Only triggers at chebyshev 1 and only for
+    # players directly cardinal/diagonal to the moose.
+    if p.kind == Moose and nearestDist == 1 and nearestPlayerIdx >= 0:
+      if sim.rng.rand(99) < MooseGutProb:
+        let pushDx = signOf(nearestX - p.tileX)
+        let pushDy = signOf(nearestY - p.tileY)
+        let pushedX = nearestX + pushDx
+        let pushedY = nearestY + pushDy
+        sim.players[nearestPlayerIdx].energy =
+          max(0, sim.players[nearestPlayerIdx].energy - MooseGutEnergyLoss)
+        sim.players[nearestPlayerIdx].trampleGlow = TrampleGlowTicks
+        var pushed = false
+        if sim.canOccupy(pushedX, pushedY, exceptPlayerIndex = nearestPlayerIdx):
+          sim.players[nearestPlayerIdx].tileX = pushedX
+          sim.players[nearestPlayerIdx].tileY = pushedY
+          pushed = true
+        logEvent(sim.tickCount, "moose_gut", %*{
+          "moose_id": p.id,
+          "slot": sim.players[nearestPlayerIdx].slot,
+          "name": sim.players[nearestPlayerIdx].name,
+          "energy_after": sim.players[nearestPlayerIdx].energy,
+          "pushed": pushed
+        })
+        return
+
     let baseProb =
       case nearestDist
       of 1: PreyFleeProb1
@@ -1003,12 +1036,20 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
     # encircle in time — coordinated teams ended up losing to
     # rabbiteers because the prey escapes before a 3rd/4th hunter
     # closes the loop.
+    #
+    # Moose breaks the simple kind*scale pattern: at dist 1 it mostly
+    # guts instead of fleeing (so flee is rare there); at dist 2 it's
+    # jumpier than other big game; at dist 3 it's calm again.
     let fleeProb =
       case p.kind
       of Rabbit: baseProb
       of Boar: (baseProb * 80) div 100      # 60 / 40 / 20
       of Stag: (baseProb * 70) div 100      # 52 / 35 / 17
-      of Moose: (baseProb * 40) div 100     # 30 / 20 / 10
+      of Moose:
+        case nearestDist
+        of 1: (baseProb * 20) div 100       # 15  — mostly guts instead
+        of 2: (baseProb * 80) div 100       # 40  — bumped from 20
+        else: (baseProb * 40) div 100       # 10
       of Elephant: (baseProb * 25) div 100  # 18 / 12 / 6
     if sim.rng.rand(99) < fleeProb:
       let dx = signOf(p.tileX - nearestX)
