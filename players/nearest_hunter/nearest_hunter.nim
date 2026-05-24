@@ -108,6 +108,10 @@ type
     # Adjacent-wait state
     adjacentWaitTicks: int
     lastAdjacentPreyId: int
+    # Energy awareness
+    energy: int
+    energyKnown: bool
+    resting: bool
 
 proc readU16(blob: string, offset: int): int =
   ## Reads one little endian unsigned 16 bit value.
@@ -235,9 +239,10 @@ proc applySpritePacket(bot: var Bot, packet: string): bool =
       bot.selfObjectId = packet.readU16(offset)
       offset += 2
     of 0x08:
-      # Self energy — skip past for now.
       if offset + 2 > packet.len:
         return false
+      bot.energy = packet.readU16(offset)
+      bot.energyKnown = true
       offset += 2
     else:
       return false
@@ -546,6 +551,13 @@ proc decideMask(bot: var Bot): tuple[mask: uint8, target: PreySight, distance: i
       bot.updateStuckState(0)
       return (0'u8, PreySight(), 0)
     return (bot.navigate(killSpot.x, killSpot.y), PreySight(), 1)
+
+  if bot.energyKnown:
+    if bot.energy < 30: bot.resting = true
+    elif bot.energy >= 60: bot.resting = false
+  if bot.resting:
+    bot.updateStuckState(0)
+    return (0'u8, PreySight(), -1)
 
   let prey = bot.visiblePrey()
   let nearby = bot.nearbyAllyCount(players)

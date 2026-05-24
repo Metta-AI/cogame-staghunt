@@ -121,6 +121,10 @@ type
     # Adjacent-wait state
     adjacentWaitTicks: int
     lastAdjacentPreyId: int
+    # Energy awareness
+    energy: int
+    energyKnown: bool
+    resting: bool
 
 # ---------------------------------------------------------------------------
 # Sprite_v1 protocol parsing (mirrors skurge.nim closely).
@@ -268,9 +272,10 @@ proc applySpritePacket(bot: var Bot, packet: string): bool =
       bot.selfObjectId = packet.readU16(offset)
       offset += 2
     of 0x08:
-      # Self energy — skip past for now.
       if offset + 2 > packet.len:
         return false
+      bot.energy = packet.readU16(offset)
+      bot.energyKnown = true
       offset += 2
     else:
       return false
@@ -634,6 +639,14 @@ proc decideNextMask(bot: var Bot): uint8 =
       bot.updateStuckState(0)
       return 0
     return bot.navigate(killSpot.x, killSpot.y)
+
+  if bot.energyKnown:
+    if bot.energy < 30: bot.resting = true
+    elif bot.energy >= 60: bot.resting = false
+  if bot.resting:
+    bot.intent = "resting (energy " & $bot.energy & ")"
+    bot.updateStuckState(0)
+    return 0
 
   let
     prey = bot.visiblePrey()

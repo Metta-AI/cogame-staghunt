@@ -102,6 +102,9 @@ type
     lastSentNonZero: bool
     lastAdjacentPreyId: int
     adjacentWaitTicks: int
+    energy: int
+    energyKnown: bool
+    resting: bool
 
 proc readU16(blob: string, offset: int): int =
   int(uint16(blob[offset].uint8) or
@@ -193,9 +196,9 @@ proc applySpritePacket(bot: var Bot, packet: string): bool =
       bot.selfObjectId = packet.readU16(offset)
       offset += 2
     of 0x08:
-      # Self energy. Stags don't trample so this bot ignores the value,
-      # but must consume the 2-byte payload to stay in sync.
       if offset + 2 > packet.len: return false
+      bot.energy = packet.readU16(offset)
+      bot.energyKnown = true
       offset += 2
     else:
       return false
@@ -492,6 +495,16 @@ proc decideMask(bot: var Bot): uint8 =
       bot.updateStuckState(0)
       return 0
     return bot.navigate(killSpot.x, killSpot.y)
+
+  # Energy rest: in long games movement cost (2/step) outpaces passive
+  # recharge (+1/18 ticks). Below 30 the bot would freeze at energy 0
+  # while still trying to move, so sit still until back to 60.
+  if bot.energyKnown:
+    if bot.energy < 30: bot.resting = true
+    elif bot.energy >= 60: bot.resting = false
+  if bot.resting:
+    bot.updateStuckState(0)
+    return 0
 
   let prey = bot.visiblePrey()
   let stag = chooseStag(bot.selfTileX, bot.selfTileY, prey, players, bot.selfObjectId)

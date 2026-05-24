@@ -102,6 +102,9 @@ type
     lastSentNonZero: bool
     lastAdjacentPreyId: int
     adjacentWaitTicks: int
+    energy: int
+    energyKnown: bool
+    resting: bool
 
 proc readU16(blob: string, offset: int): int =
   int(uint16(blob[offset].uint8) or
@@ -193,9 +196,9 @@ proc applySpritePacket(bot: var Bot, packet: string): bool =
       bot.selfObjectId = packet.readU16(offset)
       offset += 2
     of 0x08:
-      # Self energy. Moose don't trample so this bot ignores the value,
-      # but must consume the 2-byte payload to stay in sync.
       if offset + 2 > packet.len: return false
+      bot.energy = packet.readU16(offset)
+      bot.energyKnown = true
       offset += 2
     else:
       return false
@@ -497,6 +500,39 @@ proc decideMask(bot: var Bot): uint8 =
     return bot.navigate(killSpot.x, killSpot.y)
 
   let prey = bot.visiblePrey()
+
+  # Energy rest with moose-gut awareness. Moose can shove an adjacent
+  # player (chebyshev 1) for -10 energy. Don't rest INSIDE that radius;
+  # step one tile away first, then rest.
+  if bot.energyKnown:
+    if bot.energy < 30: bot.resting = true
+    elif bot.energy >= 60: bot.resting = false
+  if bot.resting:
+    var nearestMooseDist = high(int)
+    var mx, my = 0
+    for p in prey:
+      if p.kind != Moose: continue
+      let d = max(abs(bot.selfTileX - p.tileX), abs(bot.selfTileY - p.tileY))
+      if d < nearestMooseDist:
+        nearestMooseDist = d; mx = p.tileX; my = p.tileY
+    if nearestMooseDist <= 1:
+      # Step the cardinal direction that maximizes distance from the moose.
+      const dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+      var bestDist = nearestMooseDist
+      var bestTx = bot.selfTileX
+      var bestTy = bot.selfTileY
+      for d in dirs:
+        let nx = bot.selfTileX + d[0]
+        let ny = bot.selfTileY + d[1]
+        if not inBounds(nx, ny): continue
+        if bot.obstacleMap.getTile(nx, ny) == TileBlocked: continue
+        let dd = max(abs(nx - mx), abs(ny - my))
+        if dd > bestDist:
+          bestDist = dd; bestTx = nx; bestTy = ny
+      if bestTx != bot.selfTileX or bestTy != bot.selfTileY:
+        return bot.navigate(bestTx, bestTy)
+    bot.updateStuckState(0)
+    return 0
 
   # If we're already adjacent to any moose, hold there — don't get
   # distracted by chooseMoose picking a different one (which would make

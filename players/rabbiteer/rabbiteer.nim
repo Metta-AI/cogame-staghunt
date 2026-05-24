@@ -80,6 +80,10 @@ type
     # Adjacent-wait state
     adjacentWaitTicks: int
     lastAdjacentPreyId: int
+    # Energy awareness
+    energy: int
+    energyKnown: bool
+    resting: bool
 
 proc readU16(blob: string, offset: int): int =
   ## Reads one little endian unsigned 16 bit value.
@@ -195,10 +199,10 @@ proc applySpritePacket(bot: var Bot, packet: string): bool =
       bot.selfObjectId = packet.readU16(offset)
       offset += 2
     of 0x08:
-      # Self energy. Rabbits don't trample so this bot ignores the value,
-      # but must consume the 2-byte payload to stay in sync.
       if offset + 2 > packet.len:
         return false
+      bot.energy = packet.readU16(offset)
+      bot.energyKnown = true
       offset += 2
     else:
       return false
@@ -396,6 +400,15 @@ proc decideNextMask(bot: var Bot): tuple[mask: uint8, target: PreySight] =
       bot.updateStuckState(0)
       return (0'u8, PreySight())
     return (bot.navigate(killSpot.x, killSpot.y), PreySight())
+
+  # Energy rest: sit still while passive recharge ticks back up to 60.
+  # Without this, long games drain the bot to 0 and it freezes.
+  if bot.energyKnown:
+    if bot.energy < 30: bot.resting = true
+    elif bot.energy >= 60: bot.resting = false
+  if bot.resting:
+    bot.updateStuckState(0)
+    return (0'u8, PreySight())
 
   let
     rabbits = bot.visibleRabbits()

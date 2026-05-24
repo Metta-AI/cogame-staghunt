@@ -48,8 +48,10 @@ const
   ElephantThinkMin = 12              # ticks between moves
   ElephantThinkMax = 24              # ticks between moves
   ElephantTrampleEnergyLoss = 30
-  MooseGutProb = 40           # at point-blank, moose may shove instead of flee
+  MooseGutProbCardinal = 30   # adjacent N/S/E/W of moose
+  MooseGutProbDiagonal = 5    # adjacent NE/NW/SE/SW — almost safe
   MooseGutEnergyLoss = 10     # less brutal than elephant trample
+  MooseGutAnimSteps = 4       # frames over which the half-enter / slide plays
   # Trample animation: how many ticks the elephant takes to slide from
   # its original tile through the trampled player's tile and onto the
   # far tile. Logical position is frozen during the animation; visual
@@ -66,7 +68,7 @@ const
   CorpseLifetimeTicks = 48   # how long a corpse blob lingers on the tile
   AlertFlashTicks = 6
 
-  RabbitEnergyReward = 25
+  RabbitEnergyReward = 15
   RabbitScoreReward = 1
   BoarEnergyReward = 90
   BoarScoreReward = 3
@@ -196,6 +198,14 @@ type
     colorIndex: int
     overlayActive: bool
     selectWasDown: bool
+    # Moose-gut slide. When non-zero, the player was just shoved by a
+    # moose. Logical position is already at the pushed tile; the render
+    # interpolates from the *old* tile so the slide reads as a push
+    # rather than a teleport. pushDx/Dy is the push direction (the same
+    # direction the moose was facing).
+    pushStep: int
+    pushDx: int
+    pushDy: int
 
   Prey = object
     id: int
@@ -211,6 +221,12 @@ type
     trampleStep: int
     trampleDx: int
     trampleDy: int
+    # Moose-gut animation. Non-zero means the moose is mid-shove against
+    # a player. The moose's logical position stays put; the render
+    # slides the moose halfway into the player's old tile, then back.
+    gutStep: int
+    gutDx: int
+    gutDy: int
     # Stride: elephant occasionally chains several moves in the same
     # cardinal direction (a "charge"). While strideRemaining > 0, the
     # next think reuses strideDx/Dy and uses the minimum cooldown.
@@ -813,6 +829,9 @@ proc applyPlayerInput(sim: var SimServer, playerIndex: int, input: InputState) =
   if p.trampleGlow > 0:
     dec p.trampleGlow
 
+  if p.pushStep > 0:
+    dec p.pushStep
+
   if p.moveCooldown > 0:
     dec p.moveCooldown
     return
@@ -964,6 +983,13 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
         p.tileY = fy
     return
 
+  # Moose gut animation. Logical position stays put; render slides the
+  # moose forward into the player's old tile and back over the anim.
+  # No commit on completion — just clearing the counter is enough.
+  if p.kind == Moose and p.gutStep > 0:
+    dec p.gutStep
+    return
+
   if p.thinkCooldown > 0:
     dec p.thinkCooldown
     return
@@ -999,12 +1025,17 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
     p.alertFlash = AlertFlashTicks
 
     # Moose gut: when a player walks right up to a moose, it'll
-    # sometimes gore + shove them instead of fleeing. Less brutal than
-    # an elephant trample (10 vs 30 energy) but the displacement breaks
-    # the surround attempt. Only triggers at chebyshev 1 and only for
-    # players directly cardinal/diagonal to the moose.
+    # sometimes gore + shove them. Cardinal-adjacent (N/S/E/W) is the
+    # dangerous slot — 30% chance per think. Diagonal is *almost* safe
+    # — 5% chance — so the bots can corner a moose by approaching from
+    # diagonal slots. -10 energy on hit and the player is shoved one
+    # tile further from the moose if the destination is open.
     if p.kind == Moose and nearestDist == 1 and nearestPlayerIdx >= 0:
-      if sim.rng.rand(99) < MooseGutProb:
+      let manhattan = abs(nearestX - p.tileX) + abs(nearestY - p.tileY)
+      let gutProb =
+        if manhattan == 1: MooseGutProbCardinal
+        else: MooseGutProbDiagonal
+      if sim.rng.rand(99) < gutProb:
         let pushDx = signOf(nearestX - p.tileX)
         let pushDy = signOf(nearestY - p.tileY)
         let pushedX = nearestX + pushDx
@@ -1017,6 +1048,15 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
           sim.players[nearestPlayerIdx].tileX = pushedX
           sim.players[nearestPlayerIdx].tileY = pushedY
           pushed = true
+          # Animation: player slides from old tile to pushed tile while
+          # the moose half-enters and then bounces back. Without this
+          # the user sees a jarring teleport.
+          sim.players[nearestPlayerIdx].pushStep = MooseGutAnimSteps
+          sim.players[nearestPlayerIdx].pushDx = pushDx
+          sim.players[nearestPlayerIdx].pushDy = pushDy
+          p.gutStep = MooseGutAnimSteps
+          p.gutDx = pushDx
+          p.gutDy = pushDy
         logEvent(sim.tickCount, "moose_gut", %*{
           "moose_id": p.id,
           "slot": sim.players[nearestPlayerIdx].slot,
@@ -1048,7 +1088,7 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
       of Moose:
         case nearestDist
         of 1: (baseProb * 20) div 100       # 15  — mostly guts instead
-        of 2: (baseProb * 80) div 100       # 40  — bumped from 20
+        of 2: (baseProb * 60) div 100       # 30  — was 20, briefly 40
         else: (baseProb * 40) div 100       # 10
       of Elephant: (baseProb * 25) div 100  # 18 / 12 / 6
     if sim.rng.rand(99) < fleeProb:
@@ -1546,6 +1586,19 @@ proc addPreyObjects(
       screenX += prey.trampleDx * pixelOffset
       screenY += prey.trampleDy * pixelOffset
       preyZ = screenY + 200
+    # Moose gut slide: half-tile forward by the midpoint of the anim,
+    # then back to the original tile. Triangular profile peaks at
+    # progress = MooseGutAnimSteps/2 with offset = halfTile.
+    if prey.kind == Moose and prey.gutStep > 0:
+      let progress = MooseGutAnimSteps - prey.gutStep + 1
+      let halfWay = (MooseGutAnimSteps + 1) div 2
+      let triangleNum =
+        if progress <= halfWay: progress
+        else: (MooseGutAnimSteps + 1) - progress
+      let pixelOffset = (triangleNum * (StagTileSize div 2)) div halfWay
+      screenX += prey.gutDx * pixelOffset
+      screenY += prey.gutDy * pixelOffset
+      preyZ = screenY + 200
     if screenX + size <= 0 or screenY + size <= 0:
       continue
     if screenX >= viewportWidth or screenY >= viewportHeight:
@@ -1669,11 +1722,22 @@ proc addPlayerObjects(
 ) =
   const glowOffset = -((KillGlowSpriteSize - PlayerSpriteSize) div 2)
   for i in 0 ..< sim.players.len:
-    let
-      player = sim.players[i]
-      # Player sprite matches the tile size, so no centering offset.
+    let player = sim.players[i]
+    # Player sprite matches the tile size, so no centering offset.
+    var
       screenX = player.tileX * StagTileSize - cameraX
       screenY = player.tileY * StagTileSize - cameraY
+    # Moose-gut slide: logical position is already the pushed tile, so
+    # start the render one tile back in the push direction and
+    # interpolate forward to the logical tile. progress=1 -> at old
+    # tile, progress=MooseGutAnimSteps+1 -> at new tile.
+    if player.pushStep > 0:
+      let progress = MooseGutAnimSteps - player.pushStep + 1
+      let pixelOffset =
+        ((MooseGutAnimSteps + 1 - progress) * StagTileSize) div
+          (MooseGutAnimSteps + 1)
+      screenX -= player.pushDx * pixelOffset
+      screenY -= player.pushDy * pixelOffset
     if screenX + PlayerSpriteSize <= 0 or screenY + PlayerSpriteSize <= 0:
       continue
     if screenX >= viewportWidth or screenY >= viewportHeight:
@@ -2088,6 +2152,7 @@ proc resetRound(sim: var SimServer, config: GameConfig, gamesPlayed: int) =
     sim.players[i].moveCooldown = 0
     sim.players[i].killGlow = 0
     sim.players[i].trampleGlow = 0
+    sim.players[i].pushStep = 0
     sim.players[i].rechargeCounter = 0
     sim.players[i].overlayActive = false
 
