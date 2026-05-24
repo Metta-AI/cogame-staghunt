@@ -62,6 +62,23 @@ stag_hunt/focus_eval.sh 4 300 5 1
   12-24 tick cadence and added "skip wall directions when picking" so
   the elephant doesn't preferentially attack hunters who form a wall.
 
+## Subgoal-1 strategy audit (2026-05-23, after energy fix)
+
+One 60s round per bot. Verifying each follows its documented strategy.
+All seeds = 5744151.
+
+| Bot | Roster | Catches | Strategy verdict |
+|-----|--------|---------|------------------|
+| rabbiteer | 4× rabbiteer | **36 rabbits**, 0 other | ✓ rabbits-only as documented |
+| stag_hunter | 2× stag_hunter | 6 stags + 2 rabbits | ✓ 2-player coop catch on stag works |
+| coordinator | 4× coordinator | 11 rabbits + 1 boar + 2 stags | ✓ adapts coalition size to prey kind |
+| sidekick + 2× stag_hunter | mixed | 3 stags + 3 rabbits (sidekick 2/2/0/0/0) | ✓ sidekick assists on stag, not on rabbit |
+| nearest_hunter | 4× nearest_hunter | 14 rabbits + 3 boars + 5 stags | ✓ takes nearest reachable prey |
+
+Energy-aware retreat is unique to `elephant_hunter` because only
+elephants trample. The other four are uninjurable by prey, and at
+60s rounds the movement budget alone never depletes them.
+
 ## Methodology notes
 
 - Seeds tried: 5744151 (default), 1, 42, 99, 7. Most numbers above
