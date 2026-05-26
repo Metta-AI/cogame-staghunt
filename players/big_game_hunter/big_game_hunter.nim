@@ -10,8 +10,8 @@ import
 # ---------------------------------------------------------------------------
 
 const
-  CoordinatorDefaultPort = DefaultPort
-  CoordinatorWebSocketPath = "/player"
+  BigGameHunterDefaultPort = DefaultPort
+  BigGameHunterWebSocketPath = "/player"
   MaxDrainMessages = 256
 
   TargetFps = 24
@@ -792,9 +792,9 @@ proc addQueryParam(url, key, value: string): string =
 proc connectUrl(address, url, name, token: string, port, slot: int): string =
   ## Builds the player websocket URL.
   if url.len > 0:
-    result = url.withPath(CoordinatorWebSocketPath)
+    result = url.withPath(BigGameHunterWebSocketPath)
   else:
-    result = "ws://" & address & ":" & $port & CoordinatorWebSocketPath
+    result = "ws://" & address & ":" & $port & BigGameHunterWebSocketPath
   result = result.addQueryParam("name", name)
   if slot >= 0:
     result = result.addQueryParam("slot", $slot)
@@ -846,17 +846,17 @@ proc receiveUpdates(ws: WebSocket, bot: var Bot): bool =
 
 proc runBot(
   address = DefaultHost,
-  port = CoordinatorDefaultPort,
+  port = BigGameHunterDefaultPort,
   url = "",
-  name = "coordinator",
+  name = "big_game_hunter",
   token = "",
   slot = -1
 ) =
-  ## Connects coordinator to Stag Hunt and runs the coalition policy.
+  ## Connects big_game_hunter to Stag Hunt and runs the coalition policy.
   let endpoint = connectUrl(address, url, name, token, port, slot)
   while true:
     try:
-      echo "coordinator connecting to ", endpoint
+      echo "big_game_hunter connecting to ", endpoint
       var bot = initBot()
       let ws = newWebSocket(endpoint)
       var lastMask = 0xff'u8
@@ -869,15 +869,15 @@ proc runBot(
           ws.send(playerInputBlob(mask), BinaryMessage)
           lastMask = mask
     except CatchableError as e:
-      echo "coordinator reconnecting after error: ", e.msg
+      echo "big_game_hunter reconnecting after error: ", e.msg
       sleep(250)
 
 when isMainModule:
   var
     address = DefaultHost
-    port = CoordinatorDefaultPort
+    port = BigGameHunterDefaultPort
     url = getEnv("COWORLD_PLAYER_WS_URL")
-    name = "coordinator"
+    name = "big_game_hunter"
     token = ""
     slot = -1
 

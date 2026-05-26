@@ -75,7 +75,7 @@ Implementation: scan objects in range 9000-9999 for indicator sprites (id 20-22)
 ## Files
 
 - Server: `stag_hunt/stag_hunt.nim`
-- Bots: `stag_hunt/players/{coordinator,nearest_hunter,rabbiteer,sidekick,stag_hunter}/<name>.nim`
+- Bots: `stag_hunt/players/{big_game_hunter,nearest_hunter,rabbiteer,sidekick,stag_hunter,moose_hunter,elephant_hunter,modeler}/<name>.nim`
 - Protocol: `common/protocol.nim` (button constants, InputState)
 - Server framework: `common/server.nim` (Facing, TransparentColorIndex, Framebuffer)
 

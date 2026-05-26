@@ -31,14 +31,14 @@ RUN nimby --global sync nimby.lock && \
   cat nim.cfg >> /root/.nimby/nim/config/nim.cfg
 
 COPY . .
-WORKDIR /workspace/bitworld/stag_hunt/players/coordinator
+WORKDIR /workspace/bitworld/stag_hunt/players/big_game_hunter
 ARG NimFlags="-d:release -d:useMalloc --opt:speed --stackTrace:on"
 ARG NimCommand="c"
-ARG NimMain="coordinator.nim"
+ARG NimMain="big_game_hunter.nim"
 RUN nim $NimCommand \
   $NimFlags \
   --nimcache:/tmp/bitworld-nimcache \
-  --out:coordinator \
+  --out:big_game_hunter \
   $NimMain
 
 # Run Docker.
@@ -52,8 +52,8 @@ RUN apt-get update && \
 
 WORKDIR /workspace/bitworld
 COPY --from=build \
-  /workspace/bitworld/stag_hunt/players/coordinator/coordinator \
-  /bin/coordinator
+  /workspace/bitworld/stag_hunt/players/big_game_hunter/big_game_hunter \
+  /bin/big_game_hunter
 
-WORKDIR /workspace/bitworld/stag_hunt/players/coordinator
-CMD ["/bin/coordinator", "--address:host.docker.internal", "--port:8080"]
+WORKDIR /workspace/bitworld/stag_hunt/players/big_game_hunter
+CMD ["/bin/big_game_hunter", "--address:host.docker.internal", "--port:8080"]

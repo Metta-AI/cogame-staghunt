@@ -49,7 +49,7 @@ roster_for() {
     stag2)      echo "stag_hunter stag_hunter";;
     stag4)      echo "stag_hunter stag_hunter stag_hunter stag_hunter";;
     mixed6)     echo "stag_hunter stag_hunter nearest_hunter nearest_hunter rabbiteer rabbiteer";;
-    coord4)     echo "coordinator coordinator coordinator coordinator";;
+    bgh4)       echo "big_game_hunter big_game_hunter big_game_hunter big_game_hunter";;
     sidekick3)  echo "sidekick stag_hunter stag_hunter";;
     *)          echo "" >&2; return 1;;
   esac

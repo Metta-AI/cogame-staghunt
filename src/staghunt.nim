@@ -861,6 +861,9 @@ proc applyPlayerInput(sim: var SimServer, playerIndex: int, input: InputState) =
     p.tileY = ny
     p.energy -= MoveEnergyCost
     p.moveCooldown = PlayerMoveCooldownTicks
+    logEvent(sim.tickCount, "player_move", %*{
+      "slot": p.slot, "x": nx, "y": ny
+    })
 
 # ---------------------------------------------------------------------------
 # Prey AI
@@ -873,6 +876,9 @@ proc tryPreyMove(sim: var SimServer, preyIndex, dx, dy: int): bool =
   if sim.canOccupy(nx, ny, exceptPreyIndex = preyIndex):
     p.tileX = nx
     p.tileY = ny
+    logEvent(sim.tickCount, "prey_move", %*{
+      "id": p.id, "kind": $p.kind, "x": nx, "y": ny
+    })
     return true
   false
 
@@ -951,6 +957,9 @@ proc thinkElephant(sim: var SimServer, preyIndex: int): int =
     return
   p.tileX = nx
   p.tileY = ny
+  logEvent(sim.tickCount, "prey_move", %*{
+    "id": p.id, "kind": $p.kind, "x": nx, "y": ny
+  })
   # On a clean step (not a trample, not on stride), occasionally start a
   # charge in the same direction. Trample-jumps already feel like a
   # rush; we don't pile a stride on top.
@@ -981,6 +990,9 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
           sim.preyAt(fx, fy, exceptIndex = preyIndex) < 0:
         p.tileX = fx
         p.tileY = fy
+        logEvent(sim.tickCount, "prey_move", %*{
+          "id": p.id, "kind": $p.kind, "x": fx, "y": fy
+        })
     return
 
   # Moose gut animation. Logical position stays put; render slides the
@@ -1047,6 +1059,11 @@ proc thinkPrey(sim: var SimServer, preyIndex: int) =
         if sim.canOccupy(pushedX, pushedY, exceptPlayerIndex = nearestPlayerIdx):
           sim.players[nearestPlayerIdx].tileX = pushedX
           sim.players[nearestPlayerIdx].tileY = pushedY
+          logEvent(sim.tickCount, "player_move", %*{
+            "slot": sim.players[nearestPlayerIdx].slot,
+            "x": pushedX, "y": pushedY,
+            "cause": "moose_gut"
+          })
           pushed = true
           # Animation: player slides from old tile to pushed tile while
           # the moose half-enters and then bounces back. Without this
@@ -2267,7 +2284,17 @@ proc runServerLoop(
             let
               name = appState.playerNames.getOrDefault(websocket, "")
               slot = appState.playerSlots.getOrDefault(websocket, -1)
-            appState.playerIndices[websocket] = sim.addPlayer(name, slot)
+            let idx = sim.addPlayer(name, slot)
+            appState.playerIndices[websocket] = idx
+            # Record the spawn position so replay viewers know where each
+            # player starts in round 1 (round_start covers later rounds).
+            logEvent(sim.tickCount, "player_spawn", %*{
+              "slot": sim.players[idx].slot,
+              "name": sim.players[idx].name,
+              "color": sim.players[idx].colorIndex,
+              "x": sim.players[idx].tileX,
+              "y": sim.players[idx].tileY
+            })
 
         inputs = newSeq[InputState](sim.players.len)
         for websocket, playerIndex in appState.playerIndices.pairs:

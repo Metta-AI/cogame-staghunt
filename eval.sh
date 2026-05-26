@@ -15,7 +15,7 @@
 # Options:
 #   --port=N          Server port (default 8090)
 #   --seed=N          Game seed (default 0x57A617)
-#   --ticks=N         Max ticks per round (default 1200 = 50s @ 24fps)
+#   --ticks=N         Max ticks per round (default 7200 = 5 min @ 24fps)
 #   --rounds=N        Number of rounds (default 1)
 #   --out=DIR         Output directory (default tmp/eval/<timestamp>)
 #   --keep-server     Leave server running after rounds end (for viewing)
@@ -35,7 +35,7 @@ cd "$(dirname "$0")/.."
 ROSTER=""
 PORT=8090
 SEED=0x57A617
-TICKS=1200
+TICKS=7200
 ROUNDS=1
 OUTDIR=""
 KEEP_SERVER=0

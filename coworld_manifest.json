@@ -118,13 +118,13 @@
   },
   "player": [
     {
-      "id": "coordinator",
-      "name": "Coordinator",
-      "description": "Strategic bot that picks high-value prey based on nearby ally count and coordinates encirclement using A* pathfinding.",
+      "id": "big-game-hunter",
+      "name": "Big Game Hunter",
+      "description": "Counts nearby allies, derives which prey kinds are catchable at that coalition size, and picks the highest-reward catchable prey.",
       "runnable": {
         "type": "player",
-        "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-coordinator:latest",
-        "run": ["/bin/coordinator", "--address:host.docker.internal", "--port:8080"]
+        "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-big-game-hunter:latest",
+        "run": ["/bin/big_game_hunter", "--address:host.docker.internal", "--port:8080"]
       }
     },
     {
@@ -166,6 +166,36 @@
         "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-stag-hunter:latest",
         "run": ["/bin/stag-hunter"]
       }
+    },
+    {
+      "id": "moose-hunter",
+      "name": "Moose Hunter",
+      "description": "Specialist bot that targets moose, using rank-based side assignment to coordinate three hunters approaching from different cardinal directions.",
+      "runnable": {
+        "type": "player",
+        "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-moose-hunter:latest",
+        "run": ["/bin/moose_hunter", "--address:host.docker.internal", "--port:8080"]
+      }
+    },
+    {
+      "id": "elephant-hunter",
+      "name": "Elephant Hunter",
+      "description": "Specialist bot that targets elephants exclusively, using rank-based side assignment to coordinate four hunters into a simultaneous encirclement.",
+      "runnable": {
+        "type": "player",
+        "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-elephant-hunter:latest",
+        "run": ["/bin/elephant_hunter", "--address:host.docker.internal", "--port:8080"]
+      }
+    },
+    {
+      "id": "modeler",
+      "name": "Modeler",
+      "description": "Adaptive bot that scores all prey types by reward, distance, and learned ally cooperation probability, dynamically choosing the highest-expected-value target.",
+      "runnable": {
+        "type": "player",
+        "image": "ghcr.io/malcolmocean/bitworld-stag-hunt-modeler:latest",
+        "run": ["/bin/modeler", "--address:host.docker.internal", "--port:8080"]
+      }
     }
   ],
   "variants": [
@@ -184,9 +214,9 @@
     "variant_id": "smoke",
     "players": [
       {
-        "player_id": "coordinator",
+        "player_id": "big-game-hunter",
         "initial_params": {
-          "name": "coordinator_0"
+          "name": "big_game_hunter_0"
         }
       },
       {
