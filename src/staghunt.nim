@@ -1867,8 +1867,7 @@ proc buildPlayerFrame(
   sim: SimServer,
   playerIndex: int,
   state: ViewerState,
-  nextState: var ViewerState,
-  forBot: bool
+  nextState: var ViewerState
 ): seq[uint8] =
   nextState = state
   if not nextState.initialized:
@@ -1878,11 +1877,7 @@ proc buildPlayerFrame(
   if playerIndex < 0 or playerIndex >= sim.players.len:
     return
   result.addIdentity(PlayerObjectBase + playerIndex)
-  # Self-energy (0x08) is a bots-only extension — the stock bitworld
-  # client.html parser doesn't know it and closes the socket on unknown
-  # types. Bots identify themselves by passing ?slot=N at connect time.
-  if forBot:
-    result.addEnergy(sim.players[playerIndex].energy)
+  result.addEnergy(sim.players[playerIndex].energy)
   if sim.players[playerIndex].overlayActive:
     result.addOverlayObjects(sim, playerIndex)
     return
@@ -2274,7 +2269,6 @@ proc runServerLoop(
       playerSockets: seq[WebSocket] = @[]
       playerIndices: seq[int] = @[]
       playerStates: seq[ViewerState] = @[]
-      playerIsBots: seq[bool] = @[]
       globalSockets: seq[WebSocket] = @[]
       globalStates: seq[ViewerState] = @[]
       inputs: seq[InputState]
@@ -2314,10 +2308,6 @@ proc runServerLoop(
           playerSockets.add(websocket)
           playerIndices.add(playerIndex)
           playerStates.add(appState.playerStates.getOrDefault(websocket, ViewerState()))
-          # Bot vs browser is decided at connect time: bots pass ?slot=N,
-          # browsers don't. Used to skip the 0x08 energy packet for
-          # browsers since the stock bitworld client doesn't parse it.
-          playerIsBots.add(appState.playerSlots.getOrDefault(websocket, -1) >= 0)
 
         for websocket in appState.globalViewers:
           globalSockets.add(websocket)
@@ -2389,7 +2379,7 @@ proc runServerLoop(
 
     for i in 0 ..< playerSockets.len:
       var nextState: ViewerState
-      let bytes = sim.buildPlayerFrame(playerIndices[i], playerStates[i], nextState, playerIsBots[i])
+      let bytes = sim.buildPlayerFrame(playerIndices[i], playerStates[i], nextState)
       try:
         playerSockets[i].send(blobFromBytes(bytes), BinaryMessage)
         {.gcsafe.}:
