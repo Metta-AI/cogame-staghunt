@@ -8,11 +8,11 @@ same bot, no other roster.
 
 ```sh
 # Full game (60s, 32x32, mixed prey):
-stag_hunt/eval.sh elephant_hunter,elephant_hunter,elephant_hunter,elephant_hunter \
+./eval.sh elephant_hunter,elephant_hunter,elephant_hunter,elephant_hunter \
   --ticks=1440 --no-build
 
 # Focused catch-dynamics loop (elephants only, spawn near players):
-stag_hunt/focus_eval.sh 4 300 5 1
+./focus_eval.sh 4 300 5 1
 ```
 
 ## Per-commit baseline

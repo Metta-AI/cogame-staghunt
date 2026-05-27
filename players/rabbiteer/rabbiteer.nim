@@ -5,7 +5,7 @@ import
   bitworld/pathfinding
 
 const
-  # Stag Hunt world constants (mirrored from stag_hunt/stag_hunt.nim).
+  # Stag Hunt world constants (mirrored from src/staghunt.nim).
   StagTileSize = 12   # stag_hunt overrides the protocol's 6 px tile
   WorldWidthTiles = 32
   WorldHeightTiles = 32

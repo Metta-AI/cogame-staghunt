@@ -5,7 +5,7 @@ import
   bitworld/pathfinding
 
 const
-  # Stag Hunt world geometry (mirrors stag_hunt/stag_hunt.nim).
+  # Stag Hunt world geometry (mirrors src/staghunt.nim).
   StagTileSize = 12   # stag_hunt overrides the protocol's 6 px tile
   TargetFps = 24
   WorldWidthTiles = 32

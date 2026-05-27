@@ -5,7 +5,7 @@ import
   bitworld/pathfinding
 
 # ---------------------------------------------------------------------------
-# Stag Hunt constants (mirrored from stag_hunt/stag_hunt.nim; not imported to
+# Stag Hunt constants (mirrored from src/staghunt.nim; not imported to
 # avoid pulling the server's mummy/sprite-cache machinery into the bot).
 # ---------------------------------------------------------------------------
 

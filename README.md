@@ -6,12 +6,30 @@ multi-player encirclement.
 
 ## Running
 
+First-time setup — install dependencies (including `bitworld`, which isn't on
+the nimble registry) via [nimby](https://github.com/treeform/nimby):
+
 ```bash
-nimble build
-./staghunt --address:0.0.0.0 --port:8080
+nimby sync -g nimby.lock
+nimby install -g https://github.com/Metta-AI/bitworld.git
+```
+
+`-g` installs into `~/.nimby/pkgs/` and writes a local `nim.cfg` with
+absolute paths to those packages (gitignored). Then build and run:
+
+```bash
+nim c -d:release -o:out/staghunt src/staghunt.nim
+./out/staghunt --address:0.0.0.0 --port:8080
 ```
 
 Open `http://localhost:8080/client/global` to spectate.
+
+Or via Docker:
+
+```bash
+docker build -t cogame-staghunt .
+docker run --rm -p 8080:8080 cogame-staghunt
+```
 
 ## Bots
 
@@ -29,8 +47,8 @@ Eight reference Nim bots ship in `players/`:
 Build one bot:
 
 ```bash
-nim c --path:src players/rabbiteer/rabbiteer.nim
-./players/rabbiteer/rabbiteer --address:localhost --port:8080
+nim c -d:release -o:out/rabbiteer players/rabbiteer/rabbiteer.nim
+./out/rabbiteer --address:localhost --port:8080
 ```
 
 Run a full local eval (server + N bots):

@@ -2,17 +2,18 @@
 
 Working notes for the upgrade pass against `~/dev/stag_hunt_goal.md`.
 
-Branch: `stag-hunt-upgrade` (bitworld). Do not push.
+Originally on `stag-hunt-upgrade` branch in the bitworld monorepo; now lives at
+`github.com/Metta-AI/cogame-staghunt` as a standalone cogame.
 
 ## Tooling
 
-### `stag_hunt/eval.sh`
+### `./eval.sh`
 
 Local-only eval harness. Spawns server + a chosen roster of bot binaries,
 captures structured events and per-bot stdout, prints a summary.
 
 ```sh
-stag_hunt/eval.sh rabbiteer,rabbiteer,stag_hunter,stag_hunter \
+./eval.sh rabbiteer,rabbiteer,stag_hunter,stag_hunter \
   --ticks=1440 --rounds=1
 ```
 
