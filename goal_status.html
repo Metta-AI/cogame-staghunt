@@ -311,7 +311,7 @@
 
 <div class="wrap">
 
-<h1>Stag Hunt &mdash; Upgrade Status <small>2026-05-27</small></h1>
+<h1>Stag Hunt &mdash; Upgrade Status <small>2026-05-28</small></h1>
 <p class="lede">
 Subgoals 0&ndash;4 from <code>~/dev/stag_hunt_goal.md</code> have all been
 moved forward. The game now has 8 distinct bot policies, 5 prey kinds with
@@ -580,7 +580,7 @@ recorded in <code>stats.md</code>. Most recent audit:
 <h2><img class="icon" src="sprites/working/tree_30.png" alt="">Server / engine changes</h2>
 <div class="panel">
   <ul class="tight">
-    <li><b>Sprite packet 0x08 (energy)</b> emitted in every per-player frame; viewers and bots all updated (the JS in <code>player_client.html</code> + <code>global_client.html</code> originally threw on unknown packet types and disconnected &mdash; fixed).</li>
+    <li><b>Self-energy via HUD digits, not a custom packet.</b> The 0x08 energy packet was retired; bots now decode their own energy from the HUD digit sprites (ids 30&ndash;39) the server already places at y=7 every per-player frame &mdash; the same data the browser renders as the visible readout. Keeps the wire protocol identical for humans and bots, vanilla bitworld clients connect with no patch.</li>
     <li><b>Per-kind flee probability</b> + per-kind think interval (bigger animals react slower).</li>
     <li><b>Elephant trample-and-stop</b> with pixel-level slide animation; <b>moose gut</b> with player slide animation.</li>
     <li><b>JSONL event log</b> via <code>--event-log:PATH</code> (catch, trample, moose_gut, prey_spawn, snapshot, round_start, round_end, server_start, player_connect, tournament_end).</li>
@@ -668,6 +668,7 @@ recorded in <code>stats.md</code>. Most recent audit:
 <h2><img class="icon" src="sprites/working/hunter_30.png" alt="">Open work for the bots (less important per goal doc)</h2>
 <div class="panel">
   <ul class="tight">
+    <li><b>Mixed-roster startup race at 12+ bots <span class="pill bad">known bug</span>.</b> When the server accepts a heterogeneous roster of &ge;12 bots in quick succession, roughly 30&ndash;50% of them end up with empty object tables after their first frame and stay frozen at spawn for the whole round (debug shows <code>self=? nearby=0</code> indefinitely). The failing set varies run to run, so it's a race in the server's main loop &mdash; likely <code>appState.playerIndices</code> iteration interacting with the <code>removePlayer</code> shift-fixup, or a send-time error swallowing during the initial init-frame burst. Confirmed pre-existing: same pattern at <code>HEAD~1</code> and earlier. Workaround: <b>run 8-bot games (one of each policy)</b>, which work reliably. 16 homogeneous bots also work; only mixed-12+ trips it.</li>
     <li>Stable matching between hunters and big game (one stag = a specific pair, one moose = a specific trio, deterministically).</li>
     <li>Persistent modeler memory across rounds so it can learn faster in tournament play.</li>
     <li>Extract a shared bot framework &mdash; five files share ~500 lines of identical sprite/camera/nav boilerplate.</li>
