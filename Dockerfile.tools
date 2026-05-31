@@ -1,0 +1,23 @@
+# Stag Hunt supporting runnables (grader + reporter) image.
+#
+# Separate from the Nim game image: these are Python, consume an episode
+# bundle, and emit Coworld grade / report artifacts. One image, two
+# entrypoints selected by the manifest `run` override:
+#   python -m staghunt_tools.grader     (writes COGAME_GRADE_URI)
+#   python -m staghunt_tools.reporter   (writes COGAME_REPORT_URI)
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install deps first for layer caching. anthropic[bedrock] pulls boto3 for the
+# reporter's Bedrock narration; the reporter degrades gracefully without creds.
+COPY tools/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# `python -m staghunt_tools.X` resolves staghunt_tools from WORKDIR (/app),
+# which python -m places on sys.path.
+COPY tools/staghunt_tools ./staghunt_tools
+
+# Default to the reporter; the manifest's `run` override selects grader vs
+# reporter explicitly.
+CMD ["python", "-m", "staghunt_tools.reporter"]

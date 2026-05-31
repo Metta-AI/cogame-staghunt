@@ -57,4 +57,26 @@ Run a full local eval (server + N bots):
 ./eval.sh rabbiteer,rabbiteer,stag_hunter,stag_hunter
 ```
 
+## Grader & reporter
+
+Two Coworld supporting runnables live in `tools/` and ship in
+`ghcr.io/malcolmocean/bitworld-stag-hunt-tools:latest`:
+
+- **grader** — scores how interesting an episode was for multi-agent
+  collaboration (0–1), reward-agnostic (no hardcoded prey points).
+- **reporter** — a sports-commentator / newspaper recap, narrated by Claude via
+  AWS Bedrock with a deterministic fallback.
+
+Run both against a local episode:
+
+```bash
+./eval.sh big_game_hunter,big_game_hunter,big_game_hunter,big_game_hunter \
+  --no-build --ticks=1500 --rounds=2 --out=tmp/ep
+python tools/run_local.py tmp/ep/scores.json tmp/ep/out
+```
+
+See `tools/README.md` for details.
+
+## Notes
+
 See `learnings.md` for iteration notes and `stats.md` for per-change capture-rate snapshots.

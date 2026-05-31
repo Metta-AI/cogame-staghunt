@@ -2,6 +2,12 @@
 nimcache/
 out/
 tmp/
+
+# Python tools (grader/reporter) local artifacts.
+tools/.venv/
+__pycache__/
+.pytest_cache/
+
 /staghunt
 /players/big_game_hunter/big_game_hunter
 /players/elephant_hunter/elephant_hunter

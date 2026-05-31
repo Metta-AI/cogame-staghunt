@@ -1,0 +1,7 @@
+# stag_hunt tools (grader + reporter) runtime deps.
+# pydantic + requests back the vendored Coworld reporter SDK; anthropic[bedrock]
+# powers the reporter's LLM narration (the reporter degrades to a deterministic
+# narrative if Bedrock is unavailable, so this stays a soft runtime dependency).
+anthropic[bedrock]>=0.40
+pydantic>=2.6
+requests>=2.31
