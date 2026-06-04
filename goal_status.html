@@ -311,7 +311,7 @@
 
 <div class="wrap">
 
-<h1>Stag Hunt &mdash; Upgrade Status <small>2026-05-28</small></h1>
+<h1>Stag Hunt &mdash; Upgrade Status <small>2026-06-04</small></h1>
 <p class="lede">
 Subgoals 0&ndash;4 from <code>~/dev/stag_hunt_goal.md</code> have all been
 moved forward. The game now has 8 distinct bot policies, 5 prey kinds with
@@ -378,6 +378,9 @@ flash in real time.</p>
       <li>Replay-friendly: every <code>catch</code>, <code>trample</code>,
         <code>moose_gut</code>, <code>round_start</code>, etc. is in
         <code>events.jsonl</code>; the eval harness round-trips it.</li>
+      <li>Runs as a spec-compliant <b>Coworld</b>: manifest validated, grader +
+        reporter shipped, all 10 images published &amp; public. See
+        &ldquo;Coworld integration&rdquo; below.</li>
     </ul>
   </div>
   <div class="panel">
@@ -395,6 +398,83 @@ flash in real time.</p>
         the one right above.</span></li>
     </ul>
   </div>
+</div>
+
+<h2><img class="icon" src="sprites/working/tree_30.png" alt="">Coworld integration &amp; publishing <small>2026-06-04</small></h2>
+<p class="small">The game runs as a <b>Coworld</b>: a <code>coworld_manifest.json</code>
+describes the game, players, and post-episode tooling so the platform can run,
+score, and report on episodes. This pass made the manifest spec-compliant and
+shipped the supporting runnables.</p>
+
+<div class="grid2">
+  <div class="panel">
+    <h3>Manifest <span class="pill ok">spec-compliant</span></h3>
+    <p class="small">Validated against the current
+    <code>coworld_manifest_schema.json</code> <em>and</em> the authoritative
+    <code>manifest_validation.py</code> (what <code>coworld certify</code> runs).</p>
+    <ul class="tight">
+      <li>Added the required <code>reporter[]</code> and a <code>grader[]</code>.</li>
+      <li>Added the required <code>game.docs</code> (rules + play pages).</li>
+      <li><code>protocols</code> as <code>{type,value}</code> doc objects.</li>
+      <li>Flattened the 8 <code>player[]</code> entries to flat role specs.</li>
+      <li>Rewrote <code>certification</code> to a fixed 4-slot roster
+        (2&times; stag_hunter + 2&times; sidekick, both published).</li>
+    </ul>
+  </div>
+  <div class="panel">
+    <h3>Grader + reporter <span class="pill ok">shipped</span></h3>
+    <p class="small">Python, in the <code>bitworld-stag-hunt-tools</code> image,
+    run on-demand per the Coworld contract. Both are <b>reward-agnostic</b>
+    &mdash; no hardcoded prey points or coalition sizes, so a balance rebalance
+    never invalidates them.</p>
+    <ul class="tight">
+      <li><b><code>stag-hunt-collab-grader</code></b>: a 0&ndash;1 &ldquo;interesting
+        multi-agent collaboration&rdquo; score from the co-capture structure
+        (depth + breadth), competitive balance, and prey diversity.</li>
+      <li><b><code>stag-hunt-commentator</code></b>: a sports-commentator /
+        newspaper recap narrated by Claude via AWS Bedrock (Opus), with a
+        deterministic templated fallback when Bedrock is absent.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>Images published &amp; public <span class="pill ok">all 10</span></h3>
+  <p class="small">Game + 8 bots + tools, all on
+  <code>ghcr.io/malcolmocean/bitworld-stag-hunt-*</code> and public so the runner
+  can pull them. <code>upload.sh</code> publishes the tools image;
+  <code>publish_bots.sh</code> publishes the bot images (hyphen names matching
+  the manifest). GHCR has no REST API to flip visibility, so the
+  <code>making-ghcr-packages-public</code> skill drives the GitHub settings UI.</p>
+</div>
+
+<div class="panel">
+  <h3><img class="icon" src="sprites/working/rock_30.png" alt="" style="width:28px;height:28px;">Trailhead &mdash; <code>bitworld/protocol</code> &amp; <code>bitworld/pathfinding</code> <span class="pill warn">pinned to an old bitworld</span></h3>
+  <p>The game (<code>src/staghunt.nim</code>) and every bot import
+  <code>bitworld/protocol</code> and <code>bitworld/pathfinding</code>. Those were
+  cloned at floating <code>HEAD</code>, which silently broke fresh image builds
+  once bitworld&rsquo;s <code>master</code> moved on (it only kept working off a
+  stale Docker cache layer). Builds now <b>pin bitworld @ <code>5ec5494</code></b>
+  in <code>nimby.lock</code> &mdash; the last commit that still ships
+  <code>bitworld/protocol.nim</code>.</p>
+  <p>Pinning unblocks builds but freezes us on an old engine. The better
+  long-term fix:</p>
+  <ul class="tight">
+    <li>In current bitworld <code>master</code>, <code>pathfinding.nim</code>
+      still exists, but <code>protocol.nim</code> was split/renamed into
+      <code>spriteprotocol.nim</code> + <code>bitstreamprotocol.nim</code>
+      (consistent with the <code>sprite_v1</code> protocol the manifest already
+      cites).</li>
+    <li>Migrate the imports in the game <b>and</b> all bots together &mdash; they
+      must speak the same wire protocol as the bundled client &mdash; from
+      <code>bitworld/protocol</code> &rarr; <code>bitworld/spriteprotocol</code>,
+      confirm the procs/format still match, re-run the 8-bot showcase, then move
+      the pin forward (ideally to a tagged bitworld release rather than floating
+      <code>HEAD</code>, so this can&rsquo;t silently break again).</li>
+    <li>Alternative: vendor just the protocol module to decouple from bitworld&rsquo;s
+      churn &mdash; but that risks drifting from the engine the game actually
+      serves, so prefer tracking a tagged bitworld.</li>
+  </ul>
 </div>
 
 <h2><img class="icon" src="sprites/working/hunter_30.png" alt="">Players</h2>
