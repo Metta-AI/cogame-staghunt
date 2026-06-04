@@ -257,16 +257,16 @@
     },
     "players": [
       {
-        "player_id": "big-game-hunter"
+        "player_id": "stag-hunter"
       },
       {
-        "player_id": "big-game-hunter"
+        "player_id": "stag-hunter"
       },
       {
-        "player_id": "big-game-hunter"
+        "player_id": "sidekick"
       },
       {
-        "player_id": "big-game-hunter"
+        "player_id": "sidekick"
       }
     ]
   }
