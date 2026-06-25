@@ -1,5 +1,22 @@
 # Stag Hunt
 
+<!-- COWORLD-REPO-STATUS:START -->
+> [!NOTE]
+> Coworld repo status: **incomplete** (`coworld-incomplete`).
+> Canonical repository: `Metta-AI/coworld-staghunt`.
+> Manifest path: `coworld_manifest.json`.
+> Build path: `Dockerfile`, `Dockerfile.tools`, `players/big_game_hunter/Dockerfile`, `players/elephant_hunter/Dockerfile`, `players/modeler/Dockerfile`, `players/moose_hunter/Dockerfile`, `players/nearest_hunter/Dockerfile`, `players/rabbiteer/Dockerfile`, `players/sidekick/Dockerfile`, `players/stag_hunter/Dockerfile`
+> Certification: blocked until `uv run coworld certify coworld_manifest.json` passes and the result is recorded.
+>
+> Missing pieces:
+> - [ ] Validate the root concrete manifest against the current Coworld schema.
+> - [ ] Run `uv run coworld certify coworld_manifest.json` with the bundled players.
+> - [ ] Switch the repo topic to `coworld-complete` after certification passes.
+<!-- COWORLD-REPO-STATUS:END -->
+
+
+
+
 Cooperative BitWorld hunting game where players surround prey together:
 rabbits go down alone, but stags, moose, and elephants require coordinated
 multi-player encirclement.
